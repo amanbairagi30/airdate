@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
-
 export function GameSearch() {
   const [query, setQuery] = useState('');
   const [games, setGames] = useState([]);
-
   const handleSearch = async () => {
     try {
       const results = await api.searchGames(query);
