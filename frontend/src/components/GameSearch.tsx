@@ -11,7 +11,6 @@ export function GameSearch() {
       alert('Error searching games');
     }
   };
-
   return (
     <div className="mt-8">
       <h2 className="text-xl mb-4">Search Games</h2>
