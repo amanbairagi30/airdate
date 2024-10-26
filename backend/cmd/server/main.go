@@ -1,12 +1,13 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -14,15 +15,19 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+	"github.com/jmoiron/sqlx"
+	"github.com/rs/cors"
 )
 
-var db *sql.DB
+var db *sqlx.DB
 var jwtKey []byte
 
 type User struct {
-	ID       int    `json:"id"`
-	Username string `json:"username"`
-	Password string `json:"password,omitempty"`
+	ID              int    `json:"id" db:"id"`
+	Username        string `json:"username" db:"username"`
+	Password        string `json:"-" db:"password"`
+	TwitchUsername  string `json:"twitchUsername" db:"twitch_username"`
+	DiscordUsername string `json:"discordUsername" db:"discord_username"`
 }
 
 type Claims struct {
@@ -30,39 +35,67 @@ type Claims struct {
 	jwt.StandardClaims
 }
 
+type contextKey string
+
+const userClaimsKey contextKey = "claims"
+
 func main() {
-	// Load .env file if it exists
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		log.Println("Error loading .env file:", err)
+	}
 
-	// Initialize database connection
 	dbHost := os.Getenv("DB_HOST")
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
 	dbPort := os.Getenv("DB_PORT")
+	if dbPort == "" {
+		dbPort = "5432"
+	}
 	dbUser := os.Getenv("DB_USER")
+	if dbUser == "" {
+		dbUser = "postgres"
+	}
 	dbPassword := os.Getenv("DB_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = "password"
+	}
 	dbName := os.Getenv("DB_NAME")
+	if dbName == "" {
+		dbName = "pixel_and_chill"
+	}
 
-	dbURI := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName)
+	dbURI := fmt.Sprintf("host=%s port=%s user=%s password=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword)
 
 	var err error
-	db, err = sql.Open("postgres", dbURI)
+	db, err = sqlx.Connect("postgres", dbURI)
 	if err != nil {
-		log.Fatalf("Error connecting to the database: %v", err)
+		log.Fatal(err)
 	}
-	defer db.Close()
 
-	// Test the database connection
-	err = db.Ping()
+	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName))
 	if err != nil {
-		log.Fatalf("Error pinging the database: %v", err)
+		if !strings.Contains(err.Error(), "already exists") {
+			log.Fatalf("Error creating database: %v", err)
+		}
+		log.Printf("Note: %v", err)
+	}
+
+	dbURI = fmt.Sprintf("%s dbname=%s", dbURI, dbName)
+	db, err = sqlx.Connect("postgres", dbURI)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	log.Println("Successfully connected to the database")
 
-	// Set JWT key
+	if db == nil {
+		log.Fatal("Database connection is nil after successful connection")
+	}
+
 	jwtKey = []byte(os.Getenv("JWT_SECRET"))
 
-	// Create users table if not exists
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
@@ -85,8 +118,21 @@ func main() {
 	r.HandleFunc("/api/connect/discord", authMiddleware(connectDiscordHandler)).Methods("POST")
 	r.HandleFunc("/api/games/search", authMiddleware(searchGamesHandler)).Methods("GET")
 
+	if db == nil {
+		log.Fatal("Database connection is nil before starting the server")
+	}
+
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"http://localhost:3000"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"*"},
+		AllowCredentials: true,
+	})
+
+	handler := c.Handler(r)
+
 	log.Println("Starting server on :8080")
-	if err := http.ListenAndServe(":8080", r); err != nil {
+	if err := http.ListenAndServe(":8080", handler); err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
 }
@@ -98,6 +144,12 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		log.Println("Database connection is nil")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	var user User
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
@@ -105,14 +157,21 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.Username == "" || user.Password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Error hashing password", http.StatusInternalServerError)
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, "Error creating user", http.StatusInternalServerError)
 		return
 	}
 
 	_, err = db.Exec("INSERT INTO users (username, password) VALUES ($1, $2)", user.Username, string(hashedPassword))
 	if err != nil {
+		log.Printf("Error creating user: %v", err)
 		http.Error(w, "Error creating user", http.StatusInternalServerError)
 		return
 	}
@@ -130,7 +189,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var dbUser User
-	err = db.QueryRow("SELECT id, username, password FROM users WHERE username = $1", user.Username).Scan(&dbUser.ID, &dbUser.Username, &dbUser.Password)
+	err = db.Get(&dbUser, "SELECT id, username, password FROM users WHERE username = $1", user.Username)
 	if err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
@@ -153,7 +212,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		http.Error(w, "Error creating token", http.StatusInternalServerError)
+		http.Error(w, "Error generating token", http.StatusInternalServerError)
 		return
 	}
 
@@ -162,97 +221,119 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tokenString := r.Header.Get("Authorization")
-		if tokenString == "" {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
 			http.Error(w, "Missing authorization header", http.StatusUnauthorized)
 			return
 		}
 
+		bearerPrefix := "Bearer "
+		if !strings.HasPrefix(authHeader, bearerPrefix) {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, bearerPrefix)
+
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
 			return jwtKey, nil
 		})
 
-		if err != nil || !token.Valid {
+		if err != nil {
+			if ve, ok := err.(*jwt.ValidationError); ok {
+				if ve.Errors&jwt.ValidationErrorMalformed != 0 {
+					http.Error(w, "Token is malformed", http.StatusUnauthorized)
+				} else if ve.Errors&(jwt.ValidationErrorExpired|jwt.ValidationErrorNotValidYet) != 0 {
+					http.Error(w, "Token is expired or not yet valid", http.StatusUnauthorized)
+				} else {
+					http.Error(w, "Couldn't handle this token: "+err.Error(), http.StatusUnauthorized)
+				}
+			} else {
+				http.Error(w, "Couldn't handle this token: "+err.Error(), http.StatusUnauthorized)
+			}
+			return
+		}
+
+		if !token.Valid {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), userClaimsKey, claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
 
 func profileHandler(w http.ResponseWriter, r *http.Request) {
-	claims := &Claims{}
-	_, err := jwt.ParseWithClaims(r.Header.Get("Authorization"), claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-
+	claims := r.Context().Value(userClaimsKey).(*Claims)
 	var user User
-	err = db.QueryRow("SELECT id, username FROM users WHERE username = $1", claims.Username).Scan(&user.ID, &user.Username)
+	err := db.Get(&user, "SELECT id, username, twitch_username, discord_username FROM users WHERE username = $1", claims.Username)
 	if err != nil {
+		log.Printf("Error fetching user profile: %v", err)
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
 }
 
 func connectTwitchHandler(w http.ResponseWriter, r *http.Request) {
-	// This is a simplified example. In a real-world scenario, you'd implement OAuth2 flow.
-	var request struct {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	var requestBody struct {
 		TwitchUsername string `json:"twitchUsername"`
 	}
-	json.NewDecoder(r.Body).Decode(&request)
-
-	claims := r.Context().Value("claims").(*Claims)
-	
-	// Update user's Twitch username in the database
-	_, err := db.Exec("UPDATE users SET twitch_username = $1 WHERE username = $2", request.TwitchUsername, claims.Username)
+	err := json.NewDecoder(r.Body).Decode(&requestBody)
 	if err != nil {
-		http.Error(w, "Error updating Twitch username", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	_, err = db.Exec("UPDATE users SET twitch_username = $1 WHERE username = $2", requestBody.TwitchUsername, claims.Username)
+	if err != nil {
+		log.Printf("Error connecting Twitch account: %v", err)
+		http.Error(w, "Error connecting Twitch account", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Twitch account connected successfully"})
 }
 
 func connectDiscordHandler(w http.ResponseWriter, r *http.Request) {
-	// This is a simplified example. In a real-world scenario, you'd implement OAuth2 flow.
-	var request struct {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	var requestBody struct {
 		DiscordUsername string `json:"discordUsername"`
 	}
-	json.NewDecoder(r.Body).Decode(&request)
-
-	claims := r.Context().Value("claims").(*Claims)
-	
-	// Update user's Discord username in the database
-	_, err := db.Exec("UPDATE users SET discord_username = $1 WHERE username = $2", request.DiscordUsername, claims.Username)
+	err := json.NewDecoder(r.Body).Decode(&requestBody)
 	if err != nil {
-		http.Error(w, "Error updating Discord username", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	_, err = db.Exec("UPDATE users SET discord_username = $1 WHERE username = $2", requestBody.DiscordUsername, claims.Username)
+	if err != nil {
+		log.Printf("Error connecting Discord account: %v", err)
+		http.Error(w, "Error connecting Discord account", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Discord account connected successfully"})
 }
 
 func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		http.Error(w, "Missing search query", http.StatusBadRequest)
+		http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
 		return
 	}
 
-	// This is a mock implementation. In a real-world scenario, you'd use the IGDB API.
-	games := []map[string]string{
-		{"id": "1", "name": "The Legend of Zelda: Breath of the Wild"},
-		{"id": "2", "name": "Red Dead Redemption 2"},
-		{"id": "3", "name": "God of War"},
-	}
-
+	games := []string{"Game 1", "Game 2", "Game 3"}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(games)
 }
