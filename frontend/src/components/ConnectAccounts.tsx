@@ -4,7 +4,6 @@ import { api } from '../services/api';
 export function ConnectAccounts() {
   const [twitchUsername, setTwitchUsername] = useState('');
   const [discordUsername, setDiscordUsername] = useState('');
-
   const handleConnectTwitch = async () => {
     try {
       await api.connectTwitch(twitchUsername);
