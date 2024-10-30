@@ -99,7 +99,7 @@ func main() {
 		os.Getenv("DB_PASSWORD"),
 	)
 
-	// First connect without database to create it if needed
+	
 	var err error
 	db, err = sqlx.Connect("postgres", dbURL)
 	if err != nil {
@@ -114,10 +114,10 @@ func main() {
 		}
 	}
 
-	// Close initial connection
+
 	db.Close()
 
-	// Connect to the specific database
+	
 	dbURL = fmt.Sprintf("%s dbname=%s", dbURL, os.Getenv("DB_NAME"))
 	db, err = sqlx.Connect("postgres", dbURL)
 	if err != nil {
@@ -125,7 +125,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// Create tables
+
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
@@ -154,7 +154,7 @@ func main() {
 
 	r := mux.NewRouter()
 
-	// Configure CORS
+
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -164,10 +164,10 @@ func main() {
 		Debug:           true,
 	})
 
-	// Apply CORS middleware to all routes
+
 	r.Use(corsMiddleware.Handler)
 
-	// Public routes
+
 	r.HandleFunc("/api/register", registerHandler).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/login", loginHandler).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/users", getAllUsersHandler).Methods("GET", "OPTIONS")
@@ -196,13 +196,13 @@ func main() {
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("=== Register Handler Start ===")
 	
-	// Set CORS headers
+	
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	
-	// Handle preflight request
+
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -231,7 +231,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate input
+
 	username := strings.TrimSpace(req.Username)
 	password := strings.TrimSpace(req.Password)
 
@@ -240,7 +240,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if username already exists
+
 	var exists bool
 	err = db.Get(&exists, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", username)
 	if err != nil {
@@ -261,7 +261,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert user
+
 	result, err := db.Exec(`
 		INSERT INTO users (username, password, connected_games) 
 		VALUES ($1, $2, '{}'::text[])`,
@@ -299,7 +299,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trim spaces from username and password
+
 	username := strings.TrimSpace(loginRequest.Username)
 	password := strings.TrimSpace(loginRequest.Password)
 
@@ -324,7 +324,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compare password
+
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	if err != nil {
 		log.Printf("Password mismatch: %v", err)
@@ -332,7 +332,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate JWT token
+	
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": user.Username,
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
@@ -520,7 +520,7 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Popular games among Gen Z
+
 	games := []string{
 		"Fortnite",
 		"Valorant",
@@ -544,7 +544,7 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 		"Counter-Strike 2",
 	}
 
-	// Filter games based on search query
+	
 	var filteredGames []string
 	for _, game := range games {
 		if strings.Contains(strings.ToLower(game), query) {
@@ -597,7 +597,7 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the user's connected games
+	
 	_, err := db.Exec(`
 		UPDATE users 
 		SET connected_games = array_append(connected_games, $1) 
@@ -661,7 +661,7 @@ func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Found %d users", len(users))
 
-	// Pretty print the first user for debugging
+
 	if len(users) > 0 {
 		userJSON, _ := json.MarshalIndent(users[0], "", "  ")
 		log.Printf("First user data: %s", string(userJSON))
