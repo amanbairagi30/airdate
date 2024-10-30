@@ -15,24 +15,26 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"golang.org/x/crypto/bcrypt"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/cors"
+	"golang.org/x/crypto/bcrypt"
+	"database/sql/driver"
 )
 
 var db *sqlx.DB
 var jwtKey []byte
 
 type User struct {
-	ID              int     `json:"id,omitempty" db:"id"`
-	Username        string  `json:"username,omitempty" db:"username"`
-	Password        string  `json:"-" db:"password"`  // Never send password in JSON
-	TwitchUsername  *string `json:"twitchUsername,omitempty" db:"twitch_username"`  // Use pointer for nullable
-	DiscordUsername *string `json:"discordUsername,omitempty" db:"discord_username"` // Use pointer for nullable
-	InstagramHandle *string `json:"instagramHandle,omitempty" db:"instagram_handle"`
-	YoutubeChannel *string `json:"youtubeChannel,omitempty" db:"youtube_channel"`
-	FavoriteGames *string `json:"favoriteGames,omitempty" db:"favorite_games"`
-	ConnectedGames []string `json:"connectedGames,omitempty" db:"connected_games"`
+	ID              int      `json:"id" db:"id"`
+	Username        string   `json:"username" db:"username"`
+	Password        string   `json:"-" db:"password"`
+	TwitchUsername  *string  `json:"twitchUsername,omitempty" db:"twitch_username"`
+	DiscordUsername *string  `json:"discordUsername,omitempty" db:"discord_username"`
+	InstagramHandle *string  `json:"instagramHandle,omitempty" db:"instagram_handle"`
+	YoutubeChannel  *string  `json:"youtubeChannel,omitempty" db:"youtube_channel"`
+	FavoriteGames   *string  `json:"favoriteGames,omitempty" db:"favorite_games"`
+	ConnectedGames  StringArray `json:"connectedGames" db:"connected_games"`
 }
 
 type Claims struct {
@@ -49,73 +51,83 @@ type RegisterRequest struct {
 	Password string `json:"password"`
 }
 
+type StringArray []string
+
+func (a *StringArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = StringArray{}
+		return nil
+	}
+
+	switch v := value.(type) {
+	case []byte:
+		if string(v) == "{}" {
+			*a = StringArray{}
+			return nil
+		}
+		// Remove the curly braces and split
+		trimmed := string(v)[1 : len(string(v))-1]
+		if len(trimmed) > 0 {
+			*a = strings.Split(trimmed, ",")
+		} else {
+			*a = StringArray{}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported Scan, storing driver.Value type %T into type *StringArray", value)
+	}
+}
+
+func (a StringArray) Value() (driver.Value, error) {
+	if len(a) == 0 {
+		return "{}", nil
+	}
+	return fmt.Sprintf("{%s}", strings.Join(a, ",")), nil
+}
+
 func main() {
-	if err := godotenv.Load(".env.local"); err != nil {
-		if err := godotenv.Load(); err != nil {
-			log.Println("Error loading .env files:", err)
-		}
+	if err := godotenv.Load(); err != nil {
+		log.Printf("No .env file found, using environment variables")
 	}
 
-	dbHost := os.Getenv("DB_HOST")
-	if dbHost == "" {
-		dbHost = "localhost"
-	}
-	dbPort := os.Getenv("DB_PORT")
-	if dbPort == "" {
-		dbPort = "5432"
-	}
-	dbUser := os.Getenv("DB_USER")
-	if dbUser == "" {
-		dbUser = "postgres"
-	}
-	dbPassword := os.Getenv("DB_PASSWORD")
-	if dbPassword == "" {
-		dbPassword = "password"
-	}
-	dbName := os.Getenv("DB_NAME")
-	if dbName == "" {
-		dbName = "pixel_and_chill"
-	}
+	jwtKey = []byte(os.Getenv("JWT_SECRET"))
 
-	dbURI := fmt.Sprintf("host=%s port=%s user=%s password=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword)
+	dbURL := fmt.Sprintf("host=%s port=%s user=%s password=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+	)
 
-	// Add retry logic for database connection
+	// First connect without database to create it if needed
 	var err error
-	maxRetries := 5
-	for i := 0; i < maxRetries; i++ {
-		db, err = sqlx.Connect("postgres", dbURI)
-		if err == nil {
-			break
-		}
-		log.Printf("Failed to connect to database (attempt %d/%d): %v", i+1, maxRetries, err)
-		time.Sleep(5 * time.Second)
-	}
-
-	if db == nil {
-		log.Fatal("Failed to connect to database after multiple attempts")
+	db, err = sqlx.Connect("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("Error connecting to database: %v", err)
 	}
 
 	// Create database if it doesn't exist
-	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName))
+	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", os.Getenv("DB_NAME")))
 	if err != nil {
 		if !strings.Contains(err.Error(), "already exists") {
 			log.Fatalf("Error creating database: %v", err)
 		}
-		log.Printf("Note: %v", err)
 	}
+
+	// Close initial connection
+	db.Close()
 
 	// Connect to the specific database
-	dbURI = fmt.Sprintf("%s dbname=%s", dbURI, dbName)
-	db, err = sqlx.Connect("postgres", dbURI)
+	dbURL = fmt.Sprintf("%s dbname=%s", dbURL, os.Getenv("DB_NAME"))
+	db, err = sqlx.Connect("postgres", dbURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error connecting to database: %v", err)
 	}
+	defer db.Close()
 
-	// Drop and recreate tables to ensure correct schema
+	// Create tables
 	_, err = db.Exec(`
-		DROP TABLE IF EXISTS users;
-		CREATE TABLE users (
+		CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
 			username TEXT UNIQUE NOT NULL,
 			password TEXT NOT NULL,
@@ -124,57 +136,84 @@ func main() {
 			instagram_handle TEXT,
 			youtube_channel TEXT,
 			favorite_games TEXT,
-			connected_games TEXT[] DEFAULT '{}'
+			connected_games TEXT[] DEFAULT '{}'::TEXT[]
 		)
 	`)
 	if err != nil {
 		log.Fatalf("Error creating tables: %v", err)
 	}
 
-	log.Println("Successfully connected to the database")
-
-	if db == nil {
-		log.Fatal("Database connection is nil after successful connection")
-	}
-
-	jwtKey = []byte(os.Getenv("JWT_SECRET"))
+	corsHandler := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "Accept"},
+		ExposedHeaders:   []string{"Content-Length"},
+		AllowCredentials: true,
+		Debug:           true,
+	})
 
 	r := mux.NewRouter()
 
+	// Configure CORS
+	corsMiddleware := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "Accept"},
+		ExposedHeaders:   []string{"Content-Length"},
+		AllowCredentials: true,
+		Debug:           true,
+	})
+
+	// Apply CORS middleware to all routes
+	r.Use(corsMiddleware.Handler)
+
 	// Public routes
-	r.HandleFunc("/api/register", registerHandler).Methods("POST")
-	r.HandleFunc("/api/login", loginHandler).Methods("POST")
+	r.HandleFunc("/api/register", registerHandler).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/login", loginHandler).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/users", getAllUsersHandler).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/health", healthCheckHandler).Methods("GET", "OPTIONS")
 
 	// Protected routes
 	protected := r.PathPrefix("/api").Subrouter()
-	protected.HandleFunc("/profile", authMiddleware(profileHandler)).Methods("GET")
-	protected.HandleFunc("/connect/twitch", authMiddleware(connectTwitchHandler)).Methods("POST")
-	protected.HandleFunc("/disconnect/twitch", authMiddleware(disconnectTwitchHandler)).Methods("POST")
-	protected.HandleFunc("/connect/discord", authMiddleware(connectDiscordHandler)).Methods("POST")
-	protected.HandleFunc("/disconnect/discord", authMiddleware(disconnectDiscordHandler)).Methods("POST")
-	protected.HandleFunc("/connect/instagram", authMiddleware(connectInstagramHandler)).Methods("POST")
-	protected.HandleFunc("/connect/youtube", authMiddleware(connectYoutubeHandler)).Methods("POST")
-	protected.HandleFunc("/games/search", authMiddleware(searchGamesHandler)).Methods("GET")
-	protected.HandleFunc("/connect/game", authMiddleware(connectGameHandler)).Methods("POST")
+	protected.Use(mux.MiddlewareFunc(authMiddleware))
+	protected.HandleFunc("/profile", profileHandler).Methods("GET")
+	protected.HandleFunc("/connect/twitch", connectTwitchHandler).Methods("POST")
+	protected.HandleFunc("/connect/discord", connectDiscordHandler).Methods("POST")
+	protected.HandleFunc("/connect/instagram", connectInstagramHandler).Methods("POST")
+	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST")
+	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST")
+	protected.HandleFunc("/disconnect/twitch", disconnectTwitchHandler).Methods("POST")
+	protected.HandleFunc("/disconnect/discord", disconnectDiscordHandler).Methods("POST")
 
-	// Add CORS middleware
-	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"http://localhost:3000"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Content-Type", "Authorization"},
-		AllowCredentials: true,
-	})
-
-	handler := c.Handler(r)
+	handler := corsHandler.Handler(r)
 
 	log.Printf("Starting server on :8080")
-	log.Fatal(http.ListenAndServe(":8080", handler))
+	if err := http.ListenAndServe(":8080", handler); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("=== Register Handler Start ===")
-	w.Header().Set("Content-Type", "application/json")
 	
+	// Set CORS headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	
+	// Handle preflight request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Check database connection
+	if err := db.Ping(); err != nil {
+		log.Printf("Database connection error: %v", err)
+		http.Error(w, `{"error":"Database connection error"}`, http.StatusInternalServerError)
+		return
+	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -182,53 +221,54 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Error reading request body"}`, http.StatusBadRequest)
 		return
 	}
-	
 
 	log.Printf("Raw request body: %s", string(body))
 
-	//  to parse JSON
 	var req RegisterRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		log.Printf("JSON parse error: %v", err)
 		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
 		return
 	}
-	log.Printf("Username after parse: '%v'", req.Username)
-	log.Printf("Password after parse: '%v'", req.Password)
-	log.Printf("Username length: %d", len(req.Username))
-	log.Printf("Password length: %d", len(req.Password))
-	log.Printf("Username trimmed empty: %v", strings.TrimSpace(req.Username) == "")
-	log.Printf("Password trimmed empty: %v", strings.TrimSpace(req.Password) == "")
 
+	// Validate input
+	username := strings.TrimSpace(req.Username)
+	password := strings.TrimSpace(req.Password)
 
-	if strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
-		log.Printf("Validation failed - Username empty: %v, Password empty: %v", 
-			strings.TrimSpace(req.Username) == "", 
-			strings.TrimSpace(req.Password) == "")
+	if username == "" || password == "" {
 		http.Error(w, `{"error":"Username and password are required"}`, http.StatusBadRequest)
 		return
 	}
 
+	// Check if username already exists
+	var exists bool
+	err = db.Get(&exists, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", username)
+	if err != nil {
+		log.Printf("Error checking username existence: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		http.Error(w, `{"error":"Username already exists"}`, http.StatusConflict)
+		return
+	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("Password hashing error: %v", err)
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
-	result, err := db.Exec(
-		"INSERT INTO users (username, password) VALUES ($1, $2)",
-		strings.TrimSpace(req.Username),
-		string(hashedPassword),
-	)
+	// Insert user
+	result, err := db.Exec(`
+		INSERT INTO users (username, password, connected_games) 
+		VALUES ($1, $2, '{}'::text[])`,
+		username, string(hashedPassword))
 	if err != nil {
 		log.Printf("Database error: %v", err)
-		if strings.Contains(err.Error(), "unique constraint") {
-			http.Error(w, `{"error":"Username already exists"}`, http.StatusConflict)
-		} else {
-			http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		}
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -238,9 +278,9 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "User created successfully",
-		"username": req.Username,
+		"username": username,
 	})
-	
+
 	log.Printf("=== Register Handler End ===")
 }
 
@@ -295,7 +335,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	// Generate JWT token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": user.Username,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 	})
 
 	tokenString, err := token.SignedString(jwtKey)
@@ -321,10 +361,10 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("=== Login Handler End ===")
 }
 
-func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("=== Auth Middleware Start ===")
-		
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			log.Printf("No Authorization header found")
@@ -339,7 +379,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		
+
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
@@ -362,7 +402,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		ctx := context.WithValue(r.Context(), userClaimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
-	}
+	})
 }
 
 func profileHandler(w http.ResponseWriter, r *http.Request) {
@@ -372,16 +412,12 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user User
 	err := db.Get(&user, `
-		SELECT id, username, 
-			   COALESCE(twitch_username, '') as twitch_username,
-			   COALESCE(discord_username, '') as discord_username,
-			   COALESCE(instagram_handle, '') as instagram_handle,
-			   COALESCE(youtube_channel, '') as youtube_channel,
-			   COALESCE(favorite_games, '') as favorite_games
+		SELECT id, username, twitch_username, discord_username, 
+			   instagram_handle, youtube_channel, favorite_games, connected_games
 		FROM users WHERE username = $1`, claims.Username)
+	
 	if err != nil {
-		log.Printf("Error fetching user profile: %v", err)
-		http.Error(w, "Error fetching user profile", http.StatusInternalServerError)
+		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -444,7 +480,7 @@ func connectInstagramHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec("UPDATE users SET instagram_handle = $1 WHERE username = $2", 
+	_, err = db.Exec("UPDATE users SET instagram_handle = $1 WHERE username = $2",
 		requestBody.InstagramHandle, claims.Username)
 	if err != nil {
 		http.Error(w, "Error connecting Instagram account", http.StatusInternalServerError)
@@ -466,7 +502,7 @@ func connectYoutubeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec("UPDATE users SET youtube_channel = $1 WHERE username = $2", 
+	_, err = db.Exec("UPDATE users SET youtube_channel = $1 WHERE username = $2",
 		requestBody.YoutubeChannel, claims.Username)
 	if err != nil {
 		http.Error(w, "Error connecting YouTube account", http.StatusInternalServerError)
@@ -522,7 +558,7 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 
 func disconnectTwitchHandler(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*Claims)
-	
+
 	_, err := db.Exec("UPDATE users SET twitch_username = NULL WHERE username = $1", claims.Username)
 	if err != nil {
 		log.Printf("Error disconnecting Twitch account: %v", err)
@@ -536,7 +572,7 @@ func disconnectTwitchHandler(w http.ResponseWriter, r *http.Request) {
 
 func disconnectDiscordHandler(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*Claims)
-	
+
 	_, err := db.Exec("UPDATE users SET discord_username = NULL WHERE username = $1", claims.Username)
 	if err != nil {
 		log.Printf("Error disconnecting Discord account: %v", err)
@@ -550,12 +586,12 @@ func disconnectDiscordHandler(w http.ResponseWriter, r *http.Request) {
 
 func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*Claims)
-	
+
 	var requestBody struct {
 		GameName string `json:"gameName"`
 		GameID   string `json:"gameId"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -567,7 +603,7 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 		SET connected_games = array_append(connected_games, $1) 
 		WHERE username = $2 AND NOT $1 = ANY(connected_games)`,
 		requestBody.GameName, claims.Username)
-	
+
 	if err != nil {
 		log.Printf("Error connecting game: %v", err)
 		http.Error(w, "Error connecting game", http.StatusInternalServerError)
@@ -580,4 +616,68 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// NEED TO WORK ON AUTH
+func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("=== Get All Users Handler Start ===")
+
+	// Enable CORS headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	// Check if database connection is alive
+	if err := db.Ping(); err != nil {
+		log.Printf("Database connection error: %v", err)
+		http.Error(w, `{"error":"Database connection error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var users []User
+	err := db.Select(&users, `
+		SELECT 
+			id, 
+			username, 
+			twitch_username, 
+			discord_username, 
+			instagram_handle, 
+			youtube_channel, 
+			favorite_games, 
+			COALESCE(connected_games, '{}'::text[]) as connected_games
+		FROM users
+		ORDER BY id DESC
+		LIMIT 50
+	`)
+	
+	if err != nil {
+		log.Printf("Error fetching users: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"Error fetching users: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	// If no users found, return empty array instead of null
+	if users == nil {
+		users = []User{}
+	}
+
+	log.Printf("Found %d users", len(users))
+
+	// Pretty print the first user for debugging
+	if len(users) > 0 {
+		userJSON, _ := json.MarshalIndent(users[0], "", "  ")
+		log.Printf("First user data: %s", string(userJSON))
+	}
+
+	if err := json.NewEncoder(w).Encode(users); err != nil {
+		log.Printf("Error encoding users response: %v", err)
+		http.Error(w, `{"error":"Error encoding response"}`, http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("=== Get All Users Handler End ===")
+}
+
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}

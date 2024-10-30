@@ -14,6 +14,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    ports:
+      - "5432:5432"
+    networks:
+      - app-network
 
   app:
     build: 
@@ -28,10 +32,24 @@ services:
       - DB_PASSWORD=password
       - DB_NAME=pixel_and_chill
       - JWT_SECRET=your_jwt_secret
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000
+    volumes:
+      - ./cmd/server:/app
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
+    restart: always
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   postgres_data:
