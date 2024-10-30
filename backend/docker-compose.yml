@@ -1,22 +1,6 @@
 version: '3.8'
 
 services:
-  app:
-    build: 
-      context: ./cmd/server
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    depends_on:
-      - db
-    environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=password
-      - DB_NAME=pixel_and_chill
-      - JWT_SECRET=your_jwt_secret
-
   db:
     image: postgres:13
     environment:
@@ -25,6 +9,29 @@ services:
       - POSTGRES_DB=pixel_and_chill
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: 
+      context: ./cmd/server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=pixel_and_chill
+      - JWT_SECRET=your_jwt_secret
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:
