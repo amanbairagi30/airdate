@@ -20,6 +20,7 @@ import (
 	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
 	"database/sql/driver"
+	"database/sql"
 )
 
 var db *sqlx.DB
@@ -35,6 +36,7 @@ type User struct {
 	YoutubeChannel  *string  `json:"youtubeChannel,omitempty" db:"youtube_channel"`
 	FavoriteGames   *string  `json:"favoriteGames,omitempty" db:"favorite_games"`
 	ConnectedGames  StringArray `json:"connectedGames" db:"connected_games"`
+	IsPrivate       bool     `json:"isPrivate" db:"is_private"`
 }
 
 type Claims struct {
@@ -136,13 +138,33 @@ func main() {
 			instagram_handle TEXT,
 			youtube_channel TEXT,
 			favorite_games TEXT,
-			connected_games TEXT[] DEFAULT '{}'::TEXT[]
+			connected_games TEXT[] DEFAULT '{}'::TEXT[],
+			is_private BOOLEAN DEFAULT FALSE
 		)
 	`)
 	if err != nil {
 		log.Fatalf("Error creating tables: %v", err)
 	}
 
+	// Add a migration to add is_private column for existing tables
+	_, err = db.Exec(`
+		DO $$ 
+		BEGIN 
+			BEGIN
+				ALTER TABLE users ADD COLUMN is_private BOOLEAN DEFAULT FALSE;
+			EXCEPTION
+				WHEN duplicate_column THEN 
+					NULL;
+			END;
+		END $$;
+	`)
+	if err != nil {
+		log.Printf("Error running migration: %v", err)
+	}
+
+	r := mux.NewRouter()
+
+	// Create a CORS handler with updated configuration
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -152,46 +174,33 @@ func main() {
 		Debug:           true,
 	})
 
-	r := mux.NewRouter()
+	// Create API subrouter
+	api := r.PathPrefix("/api").Subrouter()
 
-
-	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization", "Accept"},
-		ExposedHeaders:   []string{"Content-Length"},
-		AllowCredentials: true,
-		Debug:           true,
-	})
-
-
-	r.Use(corsMiddleware.Handler)
-
-
-	r.HandleFunc("/api/register", registerHandler).Methods("POST", "OPTIONS")
-	r.HandleFunc("/api/login", loginHandler).Methods("POST", "OPTIONS")
-	r.HandleFunc("/api/users", getAllUsersHandler).Methods("GET", "OPTIONS")
-	r.HandleFunc("/api/health", healthCheckHandler).Methods("GET", "OPTIONS")
-	r.HandleFunc("/api/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
+	// Public routes
+	api.HandleFunc("/register", registerHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/login", loginHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/users", getAllUsersHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/users/{username}", getUserProfileHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
 
 	// Protected routes
-	protected := r.PathPrefix("/api").Subrouter()
-	protected.Use(mux.MiddlewareFunc(authMiddleware))
-	protected.HandleFunc("/profile", profileHandler).Methods("GET")
-	protected.HandleFunc("/connect/twitch", connectTwitchHandler).Methods("POST")
-	protected.HandleFunc("/connect/discord", connectDiscordHandler).Methods("POST")
-	protected.HandleFunc("/connect/instagram", connectInstagramHandler).Methods("POST")
-	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST")
-	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST")
-	protected.HandleFunc("/disconnect/twitch", disconnectTwitchHandler).Methods("POST")
-	protected.HandleFunc("/disconnect/discord", disconnectDiscordHandler).Methods("POST")
+	protected := api.PathPrefix("").Subrouter()
+	protected.Use(authMiddleware)
+	protected.HandleFunc("/profile", profileHandler).Methods("GET", "OPTIONS")
+	protected.HandleFunc("/privacy", updatePrivacyHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/connect/twitch", connectTwitchHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/connect/discord", connectDiscordHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/connect/instagram", connectInstagramHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST", "OPTIONS")
 
+	// Apply CORS middleware to all routes
 	handler := corsHandler.Handler(r)
 
+	// Start server
 	log.Printf("Starting server on :8080")
-	if err := http.ListenAndServe(":8080", handler); err != nil {
-		log.Fatal(err)
-	}
+	log.Fatal(http.ListenAndServe(":8080", handler))
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
@@ -691,4 +700,126 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	username := vars["username"]
+
+	log.Printf("=== Get User Profile Handler Start === Username: %s", username)
+
+	var user User
+	err := db.Get(&user, `
+		SELECT 
+			id, 
+			username, 
+			twitch_username, 
+			discord_username, 
+			instagram_handle, 
+			youtube_channel,
+			connected_games,
+			is_private
+		FROM users 
+		WHERE username = $1`, username)
+
+	if err != nil {
+		log.Printf("Error fetching user profile: %v", err)
+		if err == sql.ErrNoRows {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+
+	// If account is private, check if the viewer is authenticated
+	if user.IsPrivate {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			// Return limited public info only
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"username":   user.Username,
+				"isPrivate": true,
+			})
+			return
+		}
+
+		// Verify token
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil || !token.Valid || claims.Username != username {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"username":   user.Username,
+				"isPrivate": true,
+			})
+			return
+		}
+	}
+
+	json.NewEncoder(w).Encode(user)
+}
+
+func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	if claims == nil {
+		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	
+	var requestBody struct {
+		IsPrivate bool `json:"isPrivate"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+		log.Printf("Error decoding request body: %v", err)
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Updating privacy settings for user %s to %v", claims.Username, requestBody.IsPrivate)
+
+	result, err := db.Exec(
+		"UPDATE users SET is_private = $1 WHERE username = $2",
+		requestBody.IsPrivate, claims.Username,
+	)
+	
+	if err != nil {
+		log.Printf("Error updating privacy settings: %v", err)
+		http.Error(w, `{"error": "Error updating privacy settings"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Error getting rows affected: %v", err)
+		http.Error(w, `{"error": "Error updating privacy settings"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Return the updated privacy status
+	response := map[string]interface{}{
+		"message": "Privacy settings updated",
+		"isPrivate": requestBody.IsPrivate,
+	}
+	
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding response: %v", err)
+		http.Error(w, `{"error": "Error encoding response"}`, http.StatusInternalServerError)
+		return
+	}
 }

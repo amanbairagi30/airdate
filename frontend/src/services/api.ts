@@ -147,6 +147,60 @@ export const api = {
       body: JSON.stringify({ gameName, gameId }),
     });
   },
+
+  getUserProfile: async (username: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${username}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${auth.getToken()}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('User not found');
+        }
+        throw new Error(`Failed to fetch profile with status ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Profile fetch error:', error);
+      throw error;
+    }
+  },
+
+  updatePrivacySettings: async (isPrivate: boolean) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/privacy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${auth.getToken()}`,
+        },
+        body: JSON.stringify({ isPrivate }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || `Failed to update privacy settings with status ${response.status}`;
+        } catch {
+          errorMessage = `Failed to update privacy settings with status ${response.status}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const text = await response.text();
+      return text ? JSON.parse(text) : { message: 'Privacy settings updated', isPrivate };
+    } catch (error) {
+      console.error('Privacy update error:', error);
+      throw error;
+    }
+  },
 };
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {

@@ -9,6 +9,7 @@ import { GameSearch } from '../../components/GameSearch';
 export default function Profile() {
   const [user, setUser] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isPrivate, setIsPrivate] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -22,6 +23,7 @@ export default function Profile() {
 
         const data = await api.getProfile();
         setUser(data);
+        setIsPrivate(data.isPrivate);
         setError(null);
       } catch (error: any) {
         console.error('Profile error:', error);
@@ -34,6 +36,16 @@ export default function Profile() {
 
     fetchProfile();
   }, [router]);
+
+  const handlePrivacyToggle = async () => {
+    try {
+      await api.updatePrivacySettings(!isPrivate);
+      setIsPrivate(!isPrivate);
+    } catch (error: any) {
+      console.error('Privacy update error:', error);
+      setError(error.message);
+    }
+  };
 
   if (error) {
     return (
@@ -59,7 +71,26 @@ export default function Profile() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center p-24">
-      <h1 className="text-2xl mb-4">Profile</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl">Profile</h1>
+        <div className="flex items-center space-x-2">
+          <span className="text-sm text-gray-600">
+            {isPrivate ? 'Private Account' : 'Public Account'}
+          </span>
+          <button
+            onClick={handlePrivacyToggle}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+              isPrivate ? 'bg-indigo-600' : 'bg-gray-200'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                isPrivate ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
       <div className="mb-8">
         <p className="mb-2">Username: {user.username}</p>
         <p className="mb-2">Twitch: {user.twitchUsername || 'Not connected'}</p>

@@ -68,7 +68,10 @@ export function UserFeed() {
               <span className="text-xl font-bold">{user.username[0].toUpperCase()}</span>
             </div>
             <div>
-              <Link href={`/profile/${user.username}`} className="font-bold hover:underline">
+              <Link 
+                href={`/profile/${user.username}`}
+                className="font-bold hover:underline"
+              >
                 {user.username}
               </Link>
               <div className="text-sm text-gray-500">
