@@ -119,7 +119,26 @@ export const api = {
   },
 
   searchGames: async (query: string) => {
-    return fetchWithAuth(`/games/search?q=${encodeURIComponent(query)}`);
+    try {
+      const response = await fetch(`${API_BASE_URL}/games/search?q=${encodeURIComponent(query)}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({
+          error: `Failed to search games with status ${response.status}`
+        }));
+        throw new Error(data.error || 'Failed to search games');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Game search error:', error);
+      throw error;
+    }
   },
 
   connectGame: async (gameName: string, gameId: string) => {

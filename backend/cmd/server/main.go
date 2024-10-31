@@ -172,6 +172,7 @@ func main() {
 	r.HandleFunc("/api/login", loginHandler).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/users", getAllUsersHandler).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/health", healthCheckHandler).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
 
 	// Protected routes
 	protected := r.PathPrefix("/api").Subrouter()
@@ -514,12 +515,23 @@ func connectYoutubeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
-	query := strings.ToLower(r.URL.Query().Get("q"))
-	if query == "" {
-		http.Error(w, "Query parameter 'q' is required", http.StatusBadRequest)
+	// Set CORS headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Handle preflight request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	query := strings.ToLower(r.URL.Query().Get("q"))
+	if query == "" {
+		http.Error(w, `{"error":"Query parameter 'q' is required"}`, http.StatusBadRequest)
+		return
+	}
 
 	games := []string{
 		"Fortnite",
@@ -544,15 +556,14 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 		"Counter-Strike 2",
 	}
 
-	
 	var filteredGames []string
 	for _, game := range games {
 		if strings.Contains(strings.ToLower(game), query) {
-			filteredGames = append(filteredGames, game)
+				filteredGames = append(filteredGames, game)
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(filteredGames)
 }
 
