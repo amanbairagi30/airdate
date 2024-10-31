@@ -67,7 +67,7 @@ func (a *StringArray) Scan(value interface{}) error {
 			*a = StringArray{}
 			return nil
 		}
-		// Remove the curly braces and split
+
 		trimmed := string(v)[1 : len(string(v))-1]
 		if len(trimmed) > 0 {
 			*a = strings.Split(trimmed, ",")
@@ -146,7 +146,7 @@ func main() {
 		log.Fatalf("Error creating tables: %v", err)
 	}
 
-	// Add a migration to add is_private column for existing tables
+
 	_, err = db.Exec(`
 		DO $$ 
 		BEGIN 
@@ -174,7 +174,6 @@ func main() {
 		Debug:           true,
 	})
 
-	// Create API subrouter
 	api := r.PathPrefix("/api").Subrouter()
 
 	// Public routes
@@ -184,7 +183,7 @@ func main() {
 	api.HandleFunc("/users/{username}", getUserProfileHandler).Methods("GET", "OPTIONS")
 	api.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
 
-	// Protected routes
+
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(authMiddleware)
 	protected.HandleFunc("/profile", profileHandler).Methods("GET", "OPTIONS")
@@ -195,10 +194,10 @@ func main() {
 	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST", "OPTIONS")
 
-	// Apply CORS middleware to all routes
+
 	handler := corsHandler.Handler(r)
 
-	// Start server
+	
 	log.Printf("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", handler))
 }
@@ -218,7 +217,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check database connection
+
 	if err := db.Ping(); err != nil {
 		log.Printf("Database connection error: %v", err)
 		http.Error(w, `{"error":"Database connection error"}`, http.StatusInternalServerError)
@@ -263,7 +262,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hash password
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("Password hashing error: %v", err)
@@ -524,13 +523,13 @@ func connectYoutubeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	// Handle preflight request
+
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -645,7 +644,7 @@ func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-	// Check if database connection is alive
+
 	if err := db.Ping(); err != nil {
 		log.Printf("Database connection error: %v", err)
 		http.Error(w, `{"error":"Database connection error"}`, http.StatusInternalServerError)
@@ -674,7 +673,7 @@ func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If no users found, return empty array instead of null
+
 	if users == nil {
 		users = []User{}
 	}
@@ -732,10 +731,10 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set response headers
+
 	w.Header().Set("Content-Type", "application/json")
 
-	// If account is private, check if the viewer is authenticated
+
 	if user.IsPrivate {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
@@ -747,7 +746,7 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Verify token
+
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
@@ -808,10 +807,10 @@ func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set response headers
+
 	w.Header().Set("Content-Type", "application/json")
 	
-	// Return the updated privacy status
+
 	response := map[string]interface{}{
 		"message": "Privacy settings updated",
 		"isPrivate": requestBody.IsPrivate,
