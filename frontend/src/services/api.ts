@@ -141,10 +141,14 @@ export const api = {
     }
   },
 
-  connectGame: async (gameName: string, gameId: string) => {
+  connectGame: async (gameName: string, gameDetails: { username: string, gameId: string }) => {
     return fetchWithAuth('/connect/game', {
       method: 'POST',
-      body: JSON.stringify({ gameName, gameId }),
+      body: JSON.stringify({
+        gameName,
+        gameUsername: gameDetails.username,
+        gameId: gameDetails.gameId
+      }),
     });
   },
 
