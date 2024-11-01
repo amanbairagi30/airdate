@@ -201,6 +201,28 @@ export const api = {
       throw error;
     }
   },
+
+  disconnectInstagram: async () => {
+    return fetchWithAuth('/disconnect/instagram', {
+      method: 'POST'
+    });
+  },
+
+  disconnectYoutube: async () => {
+    return fetchWithAuth('/disconnect/youtube', {
+      method: 'POST'
+    });
+  },
+
+  disconnectGame: async (gameName: string) => {
+    return fetchWithAuth('/disconnect/game', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ gameName }),
+    });
+  },
 };
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {

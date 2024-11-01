@@ -77,7 +77,7 @@ export function ConnectAccounts() {
     }
   };
 
-  const handleDisconnect = async (type: 'twitch' | 'discord') => {
+  const handleDisconnect = async (type: 'twitch' | 'discord' | 'instagram' | 'youtube') => {
     try {
       setError(null);
       setSuccess(null);
@@ -90,6 +90,14 @@ export function ConnectAccounts() {
         case 'discord':
           await api.disconnectDiscord();
           setSuccess('Discord account disconnected!');
+          break;
+        case 'instagram':
+          await api.disconnectInstagram();
+          setSuccess('Instagram account disconnected!');
+          break;
+        case 'youtube':
+          await api.disconnectYoutube();
+          setSuccess('YouTube channel disconnected!');
           break;
       }
       
@@ -180,52 +188,74 @@ export function ConnectAccounts() {
 
         {/* Instagram Section */}
         <div className="p-4 border rounded-lg bg-white shadow-sm">
-          <input
-            type="text"
-            placeholder="Instagram Handle"
-            value={instagramHandle}
-            onChange={(e) => setInstagramHandle(e.target.value)}
-            className="p-2 border rounded w-full focus:ring-2 focus:ring-pink-300"
-          />
-          <div className="flex gap-2">
+          {connectedAccounts.instagram ? (
             <button
-              onClick={() => handleConnect('instagram')}
-              className="mt-2 p-2 bg-pink-600 text-white rounded flex-1 hover:bg-pink-700 transition"
+              onClick={() => handleDisconnect('instagram')}
+              className="p-2 bg-red-600 text-white rounded w-full hover:bg-red-700 transition"
             >
-              Connect Instagram
+              Disconnect Instagram
             </button>
-            <button
-              onClick={() => handleDiscount('instagram')}
-              className="mt-2 p-2 bg-pink-100 text-pink-600 rounded flex-1 hover:bg-pink-200 transition"
-            >
-              Get Business Account
-            </button>
-          </div>
+          ) : (
+            <>
+              <input
+                type="text"
+                placeholder="Instagram Handle"
+                value={instagramHandle}
+                onChange={(e) => setInstagramHandle(e.target.value)}
+                className="p-2 border rounded w-full focus:ring-2 focus:ring-pink-300"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleConnect('instagram')}
+                  className="mt-2 p-2 bg-pink-600 text-white rounded flex-1 hover:bg-pink-700 transition"
+                >
+                  Connect Instagram
+                </button>
+                <button
+                  onClick={() => handleDiscount('instagram')}
+                  className="mt-2 p-2 bg-pink-100 text-pink-600 rounded flex-1 hover:bg-pink-200 transition"
+                >
+                  Get Business Account
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* YouTube Section */}
         <div className="p-4 border rounded-lg bg-white shadow-sm">
-          <input
-            type="text"
-            placeholder="YouTube Channel"
-            value={youtubeChannel}
-            onChange={(e) => setYoutubeChannel(e.target.value)}
-            className="p-2 border rounded w-full focus:ring-2 focus:ring-red-300"
-          />
-          <div className="flex gap-2">
+          {connectedAccounts.youtube ? (
             <button
-              onClick={() => handleConnect('youtube')}
-              className="mt-2 p-2 bg-red-600 text-white rounded flex-1 hover:bg-red-700 transition"
+              onClick={() => handleDisconnect('youtube')}
+              className="p-2 bg-red-600 text-white rounded w-full hover:bg-red-700 transition"
             >
-              Connect YouTube
+              Disconnect YouTube
             </button>
-            <button
-              onClick={() => handleDiscount('youtube')}
-              className="mt-2 p-2 bg-red-100 text-red-600 rounded flex-1 hover:bg-red-200 transition"
-            >
-              Get Premium
-            </button>
-          </div>
+          ) : (
+            <>
+              <input
+                type="text"
+                placeholder="YouTube Channel"
+                value={youtubeChannel}
+                onChange={(e) => setYoutubeChannel(e.target.value)}
+                className="p-2 border rounded w-full focus:ring-2 focus:ring-red-300"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleConnect('youtube')}
+                  className="mt-2 p-2 bg-red-600 text-white rounded flex-1 hover:bg-red-700 transition"
+                >
+                  Connect YouTube
+                </button>
+                <button
+                  onClick={() => handleDiscount('youtube')}
+                  className="mt-2 p-2 bg-red-100 text-red-600 rounded flex-1 hover:bg-red-200 transition"
+                >
+                  Get Premium
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

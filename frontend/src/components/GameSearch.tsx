@@ -1,134 +1,81 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 
 export function GameSearch() {
-  const [query, setQuery] = useState('');
-  const [games, setGames] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [connectedGames, setConnectedGames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [selectedGame, setSelectedGame] = useState<string | null>(null);
-  const [gameId, setGameId] = useState('');
 
-  const handleSearch = async () => {
-    if (!query.trim()) {
-      setError('Please enter a search term');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      const results = await api.searchGames(query);
-      setGames(results);
-      if (results.length === 0) {
-        setError('No games found');
+  useEffect(() => {
+    // Fetch user's connected games on component mount
+    const fetchConnectedGames = async () => {
+      try {
+        const profile = await api.getProfile();
+        setConnectedGames(profile.connectedGames || []);
+      } catch (error) {
+        console.error('Error fetching connected games:', error);
       }
-    } catch (err: any) {
-      console.error('Search error:', err);
-      setError(err.message || 'Failed to search games');
-      setGames([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+    fetchConnectedGames();
+  }, []);
 
-  const handleGameSelect = (game: string) => {
-    setSelectedGame(game);
-    setGameId('');
-    setError(null);
-    setSuccess(null);
-  };
-
-  const handleConnectGame = async () => {
-    if (!selectedGame || !gameId.trim()) {
-      setError('Please enter your game ID');
-      return;
-    }
-
+  const handleDisconnectGame = async (gameName: string) => {
     try {
-      await api.connectGame(selectedGame, gameId);
-      setSuccess(`Successfully connected to ${selectedGame}`);
-      setSelectedGame(null);
-      setGameId('');
-    } catch (err: any) {
-      setError(err.message || 'Failed to connect game');
+      await api.disconnectGame(gameName);
+      // Refresh the connected games list
+      const profile = await api.getProfile();
+      setConnectedGames(profile.connectedGames || []);
+    } catch (error: any) {
+      setError(error.message);
     }
   };
 
   return (
-    <div className="w-full max-w-md mt-8">
-      <h2 className="text-xl font-bold mb-4">Search Games</h2>
-      
-      <div className="flex gap-2">
+    <div className="w-full max-w-md">
+      <h2 className="text-xl font-semibold mb-4">Search Games</h2>
+      <div className="flex gap-2 mb-4">
         <input
           type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
           placeholder="Search popular games..."
-          className="p-2 border rounded flex-1 focus:ring-2 focus:ring-blue-300"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="p-2 border rounded flex-1"
         />
-        <button
-          onClick={handleSearch}
-          disabled={loading}
-          className="p-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition disabled:opacity-50"
-        >
-          {loading ? 'Searching...' : 'Search'}
+        <button className="p-2 bg-blue-600 text-white rounded">
+          Search
         </button>
       </div>
 
-      {error && (
-        <div className="mt-2 text-red-500 p-2 bg-red-50 rounded">
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div className="mt-2 text-green-500 p-2 bg-green-50 rounded">
-          {success}
-        </div>
-      )}
-
-      {selectedGame ? (
-        <div className="mt-4 p-4 border rounded-lg bg-white">
-          <h3 className="font-semibold mb-2">Connect to {selectedGame}</h3>
-          <input
-            type="text"
-            value={gameId}
-            onChange={(e) => setGameId(e.target.value)}
-            placeholder="Enter your game ID/username"
-            className="p-2 border rounded w-full mb-2"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleConnectGame}
-              className="p-2 bg-green-600 text-white rounded flex-1 hover:bg-green-700"
-            >
-              Connect
-            </button>
-            <button
-              onClick={() => setSelectedGame(null)}
-              className="p-2 bg-gray-200 text-gray-700 rounded flex-1 hover:bg-gray-300"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        games.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {games.map((game, index) => (
+      {/* Connected Games Section */}
+      {connectedGames.length > 0 && (
+        <div className="mt-4">
+          <h3 className="text-lg font-medium mb-2">Connected Games</h3>
+          <div className="space-y-2">
+            {connectedGames.map((game, index) => (
               <div
                 key={index}
-                onClick={() => handleGameSelect(game)}
-                className="p-3 border rounded-lg bg-white hover:bg-gray-50 transition cursor-pointer shadow-sm"
+                className="flex items-center justify-between p-2 bg-blue-50 rounded"
               >
-                {game}
+                <span className="text-blue-800">{game}</span>
+                <button
+                  onClick={() => handleDisconnectGame(game)}
+                  className="text-red-500 hover:text-red-700 transition-colors"
+                  title="Disconnect game"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
             ))}
           </div>
-        )
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-2 text-red-500 text-sm">
+          {error}
+        </div>
       )}
     </div>
   );
