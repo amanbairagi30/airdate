@@ -14,13 +14,15 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	_ "github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+
+	"database/sql"
+	"database/sql/driver"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
-	"database/sql/driver"
-	"database/sql"
 )
 
 var db *sqlx.DB
@@ -107,8 +109,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
 	}
-
-	// Create database if it doesn't exist
 	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", os.Getenv("DB_NAME")))
 	if err != nil {
 		if !strings.Contains(err.Error(), "already exists") {
@@ -164,7 +164,6 @@ func main() {
 
 	r := mux.NewRouter()
 
-	// Create a CORS handler with updated configuration
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -176,7 +175,6 @@ func main() {
 
 	api := r.PathPrefix("/api").Subrouter()
 
-	// Public routes
 	api.HandleFunc("/register", registerHandler).Methods("POST", "OPTIONS")
 	api.HandleFunc("/login", loginHandler).Methods("POST", "OPTIONS")
 	api.HandleFunc("/users", getAllUsersHandler).Methods("GET", "OPTIONS")
@@ -193,6 +191,9 @@ func main() {
 	protected.HandleFunc("/connect/instagram", connectInstagramHandler).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/disconnect/instagram", disconnectInstagramHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/disconnect/youtube", disconnectYoutubeHandler).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/disconnect/game", disconnectGameHandler).Methods("POST", "OPTIONS")
 
 
 	handler := corsHandler.Handler(r)
@@ -638,7 +639,6 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("=== Get All Users Handler Start ===")
 
-	// Enable CORS headers
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -738,7 +738,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if user.IsPrivate {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			// Return limited public info only
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"username":   user.Username,
 				"isPrivate": true,
@@ -821,4 +820,72 @@ func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Error encoding response"}`, http.StatusInternalServerError)
 		return
 	}
+}
+
+func disconnectInstagramHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+
+	_, err := db.Exec("UPDATE users SET instagram_handle = NULL WHERE username = $1", claims.Username)
+	if err != nil {
+		log.Printf("Error disconnecting Instagram account: %v", err)
+		http.Error(w, "Error disconnecting Instagram account", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Instagram account disconnected successfully"})
+}
+
+func disconnectYoutubeHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+
+	_, err := db.Exec("UPDATE users SET youtube_channel = NULL WHERE username = $1", claims.Username)
+	if err != nil {
+		log.Printf("Error disconnecting YouTube account: %v", err)
+		http.Error(w, "Error disconnecting YouTube account", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "YouTube channel disconnected successfully"})
+}
+
+func disconnectGameHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	
+	var requestBody struct {
+		GameName string `json:"gameName"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	//  connected games only show up in the user profile
+	var user User
+	err := db.Get(&user, "SELECT connected_games FROM users WHERE username = $1", claims.Username)
+	if err != nil {
+		http.Error(w, "Failed to get user games", http.StatusInternalServerError)
+		return
+	}
+
+	var updatedGames StringArray
+	for _, game := range user.ConnectedGames {
+		if game != requestBody.GameName {
+			updatedGames = append(updatedGames, game)
+		}
+	}
+
+	_, err = db.Exec("UPDATE users SET connected_games = $1 WHERE username = $2",
+		updatedGames, claims.Username)
+	if err != nil {
+		http.Error(w, "Failed to disconnect game", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Game disconnected successfully",
+	})
 }
