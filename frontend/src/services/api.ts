@@ -227,6 +227,18 @@ export const api = {
       body: JSON.stringify({ gameName }),
     });
   },
+
+  followUser: async (username: string) => {
+    return fetchWithAuth(`/users/${username}/follow`, {
+      method: 'POST'
+    });
+  },
+
+  unfollowUser: async (username: string) => {
+    return fetchWithAuth(`/users/${username}/unfollow`, {
+      method: 'POST'
+    });
+  },
 };
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {

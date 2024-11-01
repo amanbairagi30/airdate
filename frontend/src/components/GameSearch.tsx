@@ -13,7 +13,6 @@ export function GameSearch() {
   const [showConnectForm, setShowConnectForm] = useState(false);
 
   useEffect(() => {
-    // Fetch user's connected games on component mount
     const fetchConnectedGames = async () => {
       try {
         const profile = await api.getProfile();
@@ -74,6 +73,7 @@ export function GameSearch() {
       setGameId('');
       setSearchResults([]);
       setSearchQuery('');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       setError(error.message || 'Error connecting game');
     }

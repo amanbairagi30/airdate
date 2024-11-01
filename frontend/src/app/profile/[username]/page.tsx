@@ -14,6 +14,9 @@ interface UserProfile {
   youtubeChannel?: string;
   connectedGames: string[];
   isPrivate: boolean;
+  followersCount: number;
+  followingCount: number;
+  isFollowing: boolean;
 }
 
 export default function UserProfile() {
@@ -22,6 +25,7 @@ export default function UserProfile() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isOwnProfile, setIsOwnProfile] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -29,6 +33,7 @@ export default function UserProfile() {
         const data = await api.getUserProfile(params.username as string);
         setProfile(data);
         setIsOwnProfile(auth.getUsername() === params.username);
+        setIsFollowing(data.isFollowing);
         setError(null);
       } catch (error: any) {
         console.error('Profile error:', error);
@@ -50,6 +55,22 @@ export default function UserProfile() {
       setProfile(updatedProfile);
     } catch (error: any) {
       console.error('Error disconnecting game:', error);
+      setError(error.message);
+    }
+  };
+
+  const handleFollowToggle = async () => {
+    try {
+      if (isFollowing) {
+        await api.unfollowUser(profile.username);
+      } else {
+        await api.followUser(profile.username);
+      }
+      setIsFollowing(!isFollowing);
+      // Refresh profile to update counts
+      const updatedProfile = await api.getUserProfile(params.username as string);
+      setProfile(updatedProfile);
+    } catch (error: any) {
       setError(error.message);
     }
   };
@@ -99,11 +120,26 @@ export default function UserProfile() {
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4">
         <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center space-x-4 mb-6">
-            <div className="flex-1">
+          <div className="flex items-center justify-between mb-6">
+            <div>
               <h1 className="text-2xl font-bold">{profile.username}</h1>
-              <p className="text-gray-500">{profile.connectedGames?.length || 0} games connected</p>
+              <div className="text-gray-600 mt-1">
+                <span className="mr-4">{profile.followersCount} followers</span>
+                <span>{profile.followingCount} following</span>
+              </div>
             </div>
+            {!isOwnProfile && (
+              <button
+                onClick={handleFollowToggle}
+                className={`px-4 py-2 rounded-full transition ${
+                  isFollowing 
+                    ? 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                {isFollowing ? 'Unfollow' : 'Follow'}
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

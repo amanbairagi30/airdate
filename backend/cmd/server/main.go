@@ -29,16 +29,16 @@ var db *sqlx.DB
 var jwtKey []byte
 
 type User struct {
-	ID              int      `json:"id" db:"id"`
-	Username        string   `json:"username" db:"username"`
-	Password        string   `json:"-" db:"password"`
-	TwitchUsername  *string  `json:"twitchUsername,omitempty" db:"twitch_username"`
-	DiscordUsername *string  `json:"discordUsername,omitempty" db:"discord_username"`
-	InstagramHandle *string  `json:"instagramHandle,omitempty" db:"instagram_handle"`
-	YoutubeChannel  *string  `json:"youtubeChannel,omitempty" db:"youtube_channel"`
-	FavoriteGames   *string  `json:"favoriteGames,omitempty" db:"favorite_games"`
+	ID              int         `json:"id" db:"id"`
+	Username        string      `json:"username" db:"username"`
+	Password        string      `json:"-" db:"password"`
+	TwitchUsername  *string     `json:"twitchUsername,omitempty" db:"twitch_username"`
+	DiscordUsername *string     `json:"discordUsername,omitempty" db:"discord_username"`
+	InstagramHandle *string     `json:"instagramHandle,omitempty" db:"instagram_handle"`
+	YoutubeChannel  *string     `json:"youtubeChannel,omitempty" db:"youtube_channel"`
+	FavoriteGames   *string     `json:"favoriteGames,omitempty" db:"favorite_games"`
 	ConnectedGames  StringArray `json:"connectedGames" db:"connected_games"`
-	IsPrivate       bool     `json:"isPrivate" db:"is_private"`
+	IsPrivate       bool        `json:"isPrivate" db:"is_private"`
 }
 
 type Claims struct {
@@ -89,6 +89,13 @@ func (a StringArray) Value() (driver.Value, error) {
 	return fmt.Sprintf("{%s}", strings.Join(a, ",")), nil
 }
 
+type UserProfile struct {
+	User
+	FollowersCount int  `json:"followersCount"`
+	FollowingCount int  `json:"followingCount"`
+	IsFollowing    bool `json:"isFollowing"`
+}
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("No .env file found, using environment variables")
@@ -103,7 +110,6 @@ func main() {
 		os.Getenv("DB_PASSWORD"),
 	)
 
-	
 	var err error
 	db, err = sqlx.Connect("postgres", dbURL)
 	if err != nil {
@@ -116,17 +122,14 @@ func main() {
 		}
 	}
 
-
 	db.Close()
 
-	
 	dbURL = fmt.Sprintf("%s dbname=%s", dbURL, os.Getenv("DB_NAME"))
 	db, err = sqlx.Connect("postgres", dbURL)
 	if err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
 	}
 	defer db.Close()
-
 
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
@@ -146,7 +149,6 @@ func main() {
 		log.Fatalf("Error creating tables: %v", err)
 	}
 
-
 	_, err = db.Exec(`
 		DO $$ 
 		BEGIN 
@@ -162,62 +164,71 @@ func main() {
 		log.Printf("Error running migration: %v", err)
 	}
 
+	// Create followers table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS followers (
+			follower_id INTEGER REFERENCES users(id),
+			following_id INTEGER REFERENCES users(id),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (follower_id, following_id)
+		)
+	`)
+	if err != nil {
+		log.Fatal("Error creating followers table:", err)
+	}
+
 	r := mux.NewRouter()
 
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization", "Accept"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		ExposedHeaders:   []string{"Content-Length"},
 		AllowCredentials: true,
-		Debug:           true,
+		Debug:            true,
 	})
 
 	api := r.PathPrefix("/api").Subrouter()
 
-	api.HandleFunc("/register", registerHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/login", loginHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/users", getAllUsersHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/users/{username}", getUserProfileHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
-
+	api.HandleFunc("/register", registerHandler).Methods("POST")
+	api.HandleFunc("/login", loginHandler).Methods("POST")
+	api.HandleFunc("/users", getAllUsersHandler).Methods("GET")
+	api.HandleFunc("/users/{username}", getUserProfileHandler).Methods("GET")
+	api.HandleFunc("/health", healthCheckHandler).Methods("GET")
 
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(authMiddleware)
-	protected.HandleFunc("/profile", profileHandler).Methods("GET", "OPTIONS")
-	protected.HandleFunc("/privacy", updatePrivacyHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/connect/twitch", connectTwitchHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/connect/discord", connectDiscordHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/connect/instagram", connectInstagramHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/disconnect/instagram", disconnectInstagramHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/disconnect/youtube", disconnectYoutubeHandler).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/disconnect/game", disconnectGameHandler).Methods("POST", "OPTIONS")
-
+	protected.HandleFunc("/profile", profileHandler).Methods("GET")
+	protected.HandleFunc("/privacy", updatePrivacyHandler).Methods("POST")
+	protected.HandleFunc("/connect/twitch", connectTwitchHandler).Methods("POST")
+	protected.HandleFunc("/connect/discord", connectDiscordHandler).Methods("POST")
+	protected.HandleFunc("/connect/instagram", connectInstagramHandler).Methods("POST")
+	protected.HandleFunc("/connect/youtube", connectYoutubeHandler).Methods("POST")
+	protected.HandleFunc("/connect/game", connectGameHandler).Methods("POST")
+	protected.HandleFunc("/disconnect/instagram", disconnectInstagramHandler).Methods("POST")
+	protected.HandleFunc("/disconnect/youtube", disconnectYoutubeHandler).Methods("POST")
+	protected.HandleFunc("/disconnect/game", disconnectGameHandler).Methods("POST")
+	protected.HandleFunc("/users/{username}/follow", followUserHandler).Methods("POST")
+	protected.HandleFunc("/users/{username}/unfollow", unfollowUserHandler).Methods("POST")
 
 	handler := corsHandler.Handler(r)
 
-	
 	log.Printf("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", handler))
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("=== Register Handler Start ===")
-	
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-
 
 	if err := db.Ping(); err != nil {
 		log.Printf("Database connection error: %v", err)
@@ -241,7 +252,6 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	username := strings.TrimSpace(req.Username)
 	password := strings.TrimSpace(req.Password)
 
@@ -249,7 +259,6 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Username and password are required"}`, http.StatusBadRequest)
 		return
 	}
-
 
 	var exists bool
 	err = db.Get(&exists, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", username)
@@ -263,14 +272,12 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("Password hashing error: %v", err)
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-
 
 	result, err := db.Exec(`
 		INSERT INTO users (username, password, connected_games) 
@@ -287,7 +294,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "User created successfully",
+		"message":  "User created successfully",
 		"username": username,
 	})
 
@@ -308,7 +315,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Invalid request format"}`, http.StatusBadRequest)
 		return
 	}
-
 
 	username := strings.TrimSpace(loginRequest.Username)
 	password := strings.TrimSpace(loginRequest.Password)
@@ -334,7 +340,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	if err != nil {
 		log.Printf("Password mismatch: %v", err)
@@ -342,7 +347,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": user.Username,
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
@@ -373,43 +377,26 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("=== Auth Middleware Start ===")
-
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			log.Printf("No Authorization header found")
+		tokenString := r.Header.Get("Authorization")
+		if tokenString == "" {
 			http.Error(w, "Authorization header required", http.StatusUnauthorized)
 			return
 		}
 
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			log.Printf("Invalid Authorization header format")
-			http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
-			return
-		}
-
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		// Remove "Bearer " prefix if present
+		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
 
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
 		})
 
-		if err != nil {
-			log.Printf("Error parsing token: %v", err)
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
 
-		if !token.Valid {
-			log.Printf("Invalid token")
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		log.Printf("Successfully authenticated user: %s", claims.Username)
-		log.Printf("=== Auth Middleware End ===")
-
+		// Store claims in context
 		ctx := context.WithValue(r.Context(), userClaimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -425,7 +412,7 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 		SELECT id, username, twitch_username, discord_username, 
 			   instagram_handle, youtube_channel, favorite_games, connected_games
 		FROM users WHERE username = $1`, claims.Username)
-	
+
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -530,7 +517,6 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -568,7 +554,7 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 	var filteredGames []string
 	for _, game := range games {
 		if strings.Contains(strings.ToLower(game), query) {
-				filteredGames = append(filteredGames, game)
+			filteredGames = append(filteredGames, game)
 		}
 	}
 
@@ -617,7 +603,6 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	
 	_, err := db.Exec(`
 		UPDATE users 
 		SET connected_games = array_append(connected_games, $1) 
@@ -637,62 +622,24 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("=== Get All Users Handler Start ===")
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-
-	if err := db.Ping(); err != nil {
-		log.Printf("Database connection error: %v", err)
-		http.Error(w, `{"error":"Database connection error"}`, http.StatusInternalServerError)
-		return
-	}
-
 	var users []User
 	err := db.Select(&users, `
-		SELECT 
-			id, 
-			username, 
-			twitch_username, 
-			discord_username, 
-			instagram_handle, 
-			youtube_channel, 
-			favorite_games, 
-			COALESCE(connected_games, '{}'::text[]) as connected_games
-		FROM users
+		SELECT id, username, twitch_username, discord_username, 
+			   instagram_handle, youtube_channel, favorite_games, 
+			   connected_games, is_private 
+		FROM users 
+		WHERE is_private = false
 		ORDER BY id DESC
-		LIMIT 50
 	`)
 	
 	if err != nil {
 		log.Printf("Error fetching users: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"Error fetching users: %v"}`, err), http.StatusInternalServerError)
+		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
 		return
 	}
 
-
-	if users == nil {
-		users = []User{}
-	}
-
-	log.Printf("Found %d users", len(users))
-
-
-	if len(users) > 0 {
-		userJSON, _ := json.MarshalIndent(users[0], "", "  ")
-		log.Printf("First user data: %s", string(userJSON))
-	}
-
-	if err := json.NewEncoder(w).Encode(users); err != nil {
-		log.Printf("Error encoding users response: %v", err)
-		http.Error(w, `{"error":"Error encoding response"}`, http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("=== Get All Users Handler End ===")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(users)
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -705,63 +652,70 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	username := vars["username"]
 
-	log.Printf("=== Get User Profile Handler Start === Username: %s", username)
+	// Get the requesting user's claims (if authenticated)
+	var currentUsername string
+	claims, ok := r.Context().Value(userClaimsKey).(*Claims)
+	if ok && claims != nil {
+		currentUsername = claims.Username
+	}
 
-	var user User
-	err := db.Get(&user, `
-		SELECT 
-			id, 
-			username, 
-			twitch_username, 
-			discord_username, 
-			instagram_handle, 
-			youtube_channel,
-			connected_games,
-			is_private
-		FROM users 
-		WHERE username = $1`, username)
-
+	var profile User
+	err := db.Get(&profile, "SELECT * FROM users WHERE username = $1", username)
 	if err != nil {
-		log.Printf("Error fetching user profile: %v", err)
 		if err == sql.ErrNoRows {
 			http.Error(w, "User not found", http.StatusNotFound)
-			return
+		} else {
+			http.Error(w, "Failed to get user profile", http.StatusInternalServerError)
 		}
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
+	// Get follower and following counts
+	var followersCount, followingCount int
+	err = db.QueryRow(`
+		SELECT 
+			(SELECT COUNT(*) FROM followers WHERE following_id = u.id) as followers_count,
+			(SELECT COUNT(*) FROM followers WHERE follower_id = u.id) as following_count
+		FROM users u WHERE u.username = $1
+	`, username).Scan(&followersCount, &followingCount)
+	if err != nil {
+		log.Printf("Error getting follow counts: %v", err)
+		// Continue without counts rather than failing
+		followersCount = 0
+		followingCount = 0
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-
-
-	if user.IsPrivate {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"username":   user.Username,
-				"isPrivate": true,
-			})
-			return
-		}
-
-
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		claims := &Claims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			return jwtKey, nil
-		})
-
-		if err != nil || !token.Valid || claims.Username != username {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"username":   user.Username,
-				"isPrivate": true,
-			})
-			return
+	// Check if the current user is following this profile
+	isFollowing := false
+	if currentUsername != "" {
+		err = db.QueryRow(`
+			SELECT EXISTS(
+				SELECT 1 FROM followers 
+				WHERE follower_id = (SELECT id FROM users WHERE username = $1)
+				AND following_id = (SELECT id FROM users WHERE username = $2)
+			)
+		`, currentUsername, username).Scan(&isFollowing)
+		if err != nil {
+			log.Printf("Error checking follow status: %v", err)
+			// Continue without follow status rather than failing
 		}
 	}
 
-	json.NewEncoder(w).Encode(user)
+	// Create response object
+	response := struct {
+		User
+		FollowersCount int  `json:"followersCount"`
+		FollowingCount int  `json:"followingCount"`
+		IsFollowing    bool `json:"isFollowing"`
+	}{
+		User:           profile,
+		FollowersCount: followersCount,
+		FollowingCount: followingCount,
+		IsFollowing:    isFollowing,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
@@ -770,11 +724,11 @@ func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	
+
 	var requestBody struct {
 		IsPrivate bool `json:"isPrivate"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 		log.Printf("Error decoding request body: %v", err)
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
@@ -787,7 +741,7 @@ func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 		"UPDATE users SET is_private = $1 WHERE username = $2",
 		requestBody.IsPrivate, claims.Username,
 	)
-	
+
 	if err != nil {
 		log.Printf("Error updating privacy settings: %v", err)
 		http.Error(w, `{"error": "Error updating privacy settings"}`, http.StatusInternalServerError)
@@ -806,15 +760,13 @@ func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	w.Header().Set("Content-Type", "application/json")
-	
 
 	response := map[string]interface{}{
-		"message": "Privacy settings updated",
+		"message":   "Privacy settings updated",
 		"isPrivate": requestBody.IsPrivate,
 	}
-	
+
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding response: %v", err)
 		http.Error(w, `{"error": "Error encoding response"}`, http.StatusInternalServerError)
@@ -852,11 +804,11 @@ func disconnectYoutubeHandler(w http.ResponseWriter, r *http.Request) {
 
 func disconnectGameHandler(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*Claims)
-	
+
 	var requestBody struct {
 		GameName string `json:"gameName"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -888,4 +840,92 @@ func disconnectGameHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "Game disconnected successfully",
 	})
+}
+
+func followUserHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	vars := mux.Vars(r)
+	targetUsername := vars["username"]
+
+	// Get follower ID (current user)
+	var followerID int
+	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
+	if err != nil {
+		http.Error(w, "Failed to get follower ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Get target user ID
+	var followingID int
+	err = db.QueryRow("SELECT id FROM users WHERE username = $1", targetUsername).Scan(&followingID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Failed to get following ID", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Check if already following
+	var exists bool
+	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM followers WHERE follower_id = $1 AND following_id = $2)",
+		followerID, followingID).Scan(&exists)
+	if err != nil {
+		http.Error(w, "Failed to check follow status", http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		http.Error(w, "Already following this user", http.StatusBadRequest)
+		return
+	}
+
+	// Create follow relationship
+	_, err = db.Exec("INSERT INTO followers (follower_id, following_id) VALUES ($1, $2)",
+		followerID, followingID)
+	if err != nil {
+		http.Error(w, "Failed to follow user", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully followed user"})
+}
+
+func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	vars := mux.Vars(r)
+	targetUsername := vars["username"]
+
+	// Get IDs
+	var followerID, followingID int
+	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
+	if err != nil {
+		http.Error(w, "Failed to get follower ID", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT id FROM users WHERE username = $1", targetUsername).Scan(&followingID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete follow relationship
+	result, err := db.Exec("DELETE FROM followers WHERE follower_id = $1 AND following_id = $2",
+		followerID, followingID)
+	if err != nil {
+		http.Error(w, "Failed to unfollow user", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "Not following this user", http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully unfollowed user"})
 }
