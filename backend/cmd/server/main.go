@@ -410,7 +410,8 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 	var user User
 	err := db.Get(&user, `
 		SELECT id, username, twitch_username, discord_username, 
-			   instagram_handle, youtube_channel, favorite_games, connected_games
+			   instagram_handle, youtube_channel, favorite_games, 
+			   connected_games, is_private
 		FROM users WHERE username = $1`, claims.Username)
 
 	if err != nil {
@@ -628,7 +629,6 @@ func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 			   instagram_handle, youtube_channel, favorite_games, 
 			   connected_games, is_private 
 		FROM users 
-		WHERE is_private = false
 		ORDER BY id DESC
 	`)
 	
@@ -687,31 +687,34 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the current user is following this profile
 	isFollowing := false
+	followStatus := ""
 	if currentUsername != "" {
 		err = db.QueryRow(`
 			SELECT EXISTS(
 				SELECT 1 FROM followers 
 				WHERE follower_id = (SELECT id FROM users WHERE username = $1)
 				AND following_id = (SELECT id FROM users WHERE username = $2)
+				AND status = 'accepted'
 			)
 		`, currentUsername, username).Scan(&isFollowing)
 		if err != nil {
 			log.Printf("Error checking follow status: %v", err)
-			// Continue without follow status rather than failing
 		}
 	}
 
 	// Create response object
 	response := struct {
 		User
-		FollowersCount int  `json:"followersCount"`
-		FollowingCount int  `json:"followingCount"`
-		IsFollowing    bool `json:"isFollowing"`
+		FollowersCount int    `json:"followersCount"`
+		FollowingCount int    `json:"followingCount"`
+		IsFollowing    bool   `json:"isFollowing"`
+		FollowStatus   string `json:"followStatus,omitempty"`
 	}{
 		User:           profile,
 		FollowersCount: followersCount,
 		FollowingCount: followingCount,
 		IsFollowing:    isFollowing,
+		FollowStatus:   followStatus,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -855,9 +858,14 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get target user ID
+	// Get target user ID and privacy status
 	var followingID int
-	err = db.QueryRow("SELECT id FROM users WHERE username = $1", targetUsername).Scan(&followingID)
+	var isPrivate bool
+	err = db.QueryRow(`
+		SELECT id, is_private 
+		FROM users 
+		WHERE username = $1
+	`, targetUsername).Scan(&followingID, &isPrivate)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "User not found", http.StatusNotFound)
@@ -869,8 +877,12 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check if already following
 	var exists bool
-	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM followers WHERE follower_id = $1 AND following_id = $2)",
-		followerID, followingID).Scan(&exists)
+	err = db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM followers 
+			WHERE follower_id = $1 AND following_id = $2
+		)
+	`, followerID, followingID).Scan(&exists)
 	if err != nil {
 		http.Error(w, "Failed to check follow status", http.StatusInternalServerError)
 		return
@@ -882,15 +894,24 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create follow relationship
-	_, err = db.Exec("INSERT INTO followers (follower_id, following_id) VALUES ($1, $2)",
-		followerID, followingID)
+	_, err = db.Exec(`
+		INSERT INTO followers (
+			follower_id, 
+			following_id, 
+			status
+		) VALUES ($1, $2, CASE WHEN $3 THEN 'pending' ELSE 'accepted' END)
+	`, followerID, followingID, isPrivate)
+
 	if err != nil {
 		http.Error(w, "Failed to follow user", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully followed user"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Follow request sent successfully",
+		"status": map[bool]string{true: "pending", false: "accepted"}[isPrivate],
+	})
 }
 
 func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {

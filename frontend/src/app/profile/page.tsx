@@ -23,7 +23,7 @@ export default function Profile() {
 
         const data = await api.getProfile();
         setUser(data);
-        setIsPrivate(data.isPrivate);
+        setIsPrivate(data.isPrivate || false);
         setError(null);
       } catch (error: any) {
         console.error('Profile error:', error);

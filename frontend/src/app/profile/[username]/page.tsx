@@ -99,19 +99,38 @@ export default function UserProfile() {
     );
   }
 
-  if (profile.isPrivate && !isOwnProfile) {
+  if (profile.isPrivate && !isOwnProfile && !isFollowing) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center p-4">
-        <div className="text-center mb-4">
-          <h1 className="text-2xl font-bold mb-2">{profile.username}</h1>
-          <p className="text-gray-600">This account is private</p>
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-2xl font-bold">{profile.username}</h1>
+                <div className="text-gray-600 mt-1">
+                  <span className="mr-4">{profile.followersCount} followers</span>
+                  <span>{profile.followingCount} following</span>
+                </div>
+              </div>
+              <button
+                onClick={handleFollowToggle}
+                className="px-4 py-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition"
+              >
+                Follow
+              </button>
+            </div>
+            
+            <div className="text-center py-8 border-t">
+              <div className="mb-4">
+                <svg className="w-16 h-16 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m0 0v2m0-2h2m-2 0H10m4-6a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold mb-2">This Account is Private</h2>
+              <p className="text-gray-600">Follow this account to see their photos and videos.</p>
+            </div>
+          </div>
         </div>
-        <Link 
-          href="/"
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          Back to Home
-        </Link>
       </div>
     );
   }
