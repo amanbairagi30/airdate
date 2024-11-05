@@ -1,3 +1,4 @@
+"use client";
 import Landing from "@/components/landing";
 import { SelectTheme } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
