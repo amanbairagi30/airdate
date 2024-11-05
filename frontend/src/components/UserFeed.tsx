@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { api } from '../services/api';
+import { ApiError } from '../types/errors';
+import { auth } from '../services/auth';
 
 interface UserProfile {
   id: number;
@@ -15,6 +18,7 @@ interface UserProfile {
 }
 
 export function UserFeed() {
+  const router = useRouter();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,9 +28,10 @@ export function UserFeed() {
       try {
         const response = await api.getAllUsers();
         setUsers(response || []);
-      } catch (error: unknown) {
-        const err = error as Error;
-        setError(err.message || 'Failed to load users');
+        setError(null);
+      } catch (error) {
+        const apiError = error as ApiError;
+        setError(apiError.message || 'Failed to load users');
         setUsers([]);
       } finally {
         setLoading(false);
@@ -35,6 +40,28 @@ export function UserFeed() {
 
     fetchUsers();
   }, []);
+
+  const handleProfileClick = async (username: string) => {
+    try {
+      if (!auth.isAuthenticated()) {
+        router.push('/login');
+        return;
+      }
+
+      setLoading(true);
+      await api.getUserProfile(username);
+      router.push(`/profile/${username}`);
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError.message.includes('Authentication required')) {
+        router.push('/login');
+      } else {
+        setError(apiError.message || 'Failed to load profile');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -69,12 +96,12 @@ export function UserFeed() {
               <span className="text-xl font-bold">{user.username[0].toUpperCase()}</span>
             </div>
             <div>
-              <Link 
-                href={`/profile/${user.username}`}
+              <button
+                onClick={() => handleProfileClick(user.username)}
                 className="font-bold hover:underline"
               >
                 {user.username}
-              </Link>
+              </button>
               {user.isPrivate && (
                 <span className="ml-2 text-sm text-gray-500">
                   Private Account
@@ -129,6 +156,18 @@ export function UserFeed() {
           )}
         </div>
       ))}
+
+      {error && (
+        <div className="fixed bottom-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <p>{error}</p>
+          <button
+            onClick={() => setError(null)}
+            className="absolute top-0 right-0 p-2"
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 } 

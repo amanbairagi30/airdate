@@ -2,6 +2,15 @@ import { auth } from './auth';
 
 const API_BASE_URL = 'http://localhost:8080/api';
 
+const getHeaders = () => {
+  const token = auth.getToken();
+  return {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+  };
+};
+
 export const api = {
   register: async (username: string, password: string) => {
     try {
@@ -87,7 +96,29 @@ export const api = {
   },
 
   getProfile: async () => {
-    return fetchWithAuth('/profile');
+    try {
+      const token = auth.getToken();
+      const response = await fetch(`${API_BASE_URL}/profile`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        credentials: 'include',
+        mode: 'cors',
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to fetch profile: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Profile fetch error:', error);
+      throw error;
+    }
   },
 
   connectTwitch: async (twitchUsername: string) => {
@@ -118,27 +149,19 @@ export const api = {
     });
   },
 
-  searchGames: async (query: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/games/search?q=${encodeURIComponent(query)}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({
-          error: `Failed to search games with status ${response.status}`
-        }));
-        throw new Error(data.error || 'Failed to search games');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Game search error:', error);
-      throw error;
+  searchGames: async (query: string): Promise<string[]> => {
+    const response = await fetch(`${API_BASE_URL}/api/games/search?q=${encodeURIComponent(query)}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to search games with status ${response.status}`);
     }
+    
+    return response.json();
   },
 
   connectGame: async (gameName: string, gameDetails: { username: string, gameId: string }) => {
@@ -154,18 +177,20 @@ export const api = {
 
   getUserProfile: async (username: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/users/${username}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${auth.getToken()}`,
-        },
+      const token = auth.getToken();
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
+      const response = await fetch(`${API_BASE_URL}/profile/${encodeURIComponent(username)}`, {
+        method: 'GET',
+        headers: getHeaders(),
+        credentials: 'include',
       });
 
       if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error('User not found');
-        }
-        throw new Error(`Failed to fetch profile with status ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch profile: ${response.statusText}`);
       }
 
       return await response.json();
@@ -229,15 +254,41 @@ export const api = {
   },
 
   followUser: async (username: string) => {
-    return fetchWithAuth(`/users/${username}/follow`, {
-      method: 'POST'
-    });
+    try {
+      const response = await fetch(`${API_BASE_URL}/follow/${username}`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to follow user: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Follow error:', error);
+      throw error;
+    }
   },
 
   unfollowUser: async (username: string) => {
-    return fetchWithAuth(`/users/${username}/unfollow`, {
-      method: 'POST'
-    });
+    try {
+      const response = await fetch(`${API_BASE_URL}/unfollow/${username}`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to unfollow user: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Unfollow error:', error);
+      throw error;
+    }
   },
 };
 
@@ -258,6 +309,8 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
     const response = await fetch(`${API_BASE_URL}${url}`, { 
       ...options, 
       headers,
+      credentials: 'include',
+      mode: 'cors',
     });
 
     if (!response.ok) {

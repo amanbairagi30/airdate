@@ -5,9 +5,20 @@ import { useRouter } from 'next/navigation';
 import { api } from '../../services/api';
 import { ConnectAccounts } from '../../components/ConnectAccounts';
 import { GameSearch } from '../../components/GameSearch';
+import { ApiError } from '../../types/errors';
+
+interface UserProfile {
+  username: string;
+  twitchUsername?: string;
+  discordUsername?: string;
+  instagramHandle?: string;
+  youtubeChannel?: string;
+  connectedGames: string[];
+  isPrivate: boolean;
+}
 
 export default function Profile() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
   const router = useRouter();
@@ -25,10 +36,11 @@ export default function Profile() {
         setUser(data);
         setIsPrivate(data.isPrivate || false);
         setError(null);
-      } catch (error: any) {
-        console.error('Profile error:', error);
-        setError(error.message);
-        if (error.message.includes('authentication')) {
+      } catch (error) {
+        const apiError = error as ApiError;
+        console.error('Profile error:', apiError);
+        setError(apiError.message);
+        if (apiError.message.includes('authentication')) {
           router.push('/login');
         }
       }
@@ -41,9 +53,10 @@ export default function Profile() {
     try {
       await api.updatePrivacySettings(!isPrivate);
       setIsPrivate(!isPrivate);
-    } catch (error: any) {
-      console.error('Privacy update error:', error);
-      setError(error.message);
+    } catch (error) {
+      const apiError = error as ApiError;
+      console.error('Privacy update error:', apiError);
+      setError(apiError.message);
     }
   };
 

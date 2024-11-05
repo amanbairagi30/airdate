@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { ApiError } from '../types/errors';
 
 export function GameSearch() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -35,9 +36,13 @@ export function GameSearch() {
     
     try {
       const results = await api.searchGames(searchQuery);
-      setSearchResults(results || []);
-    } catch (error: any) {
-      setError(error.message || 'Error searching for games');
+      setSearchResults(results);
+      if (results.length === 0) {
+        setError('No games found matching your search');
+      }
+    } catch (error) {
+      const apiError = error as ApiError;
+      setError(apiError.message || 'Error searching for games');
       setSearchResults([]);
     } finally {
       setLoading(false);
@@ -82,11 +87,11 @@ export function GameSearch() {
   const handleDisconnectGame = async (gameName: string) => {
     try {
       await api.disconnectGame(gameName);
-      // Refresh the connected games list
       const profile = await api.getProfile();
       setConnectedGames(profile.connectedGames || []);
-    } catch (error: any) {
-      setError(error.message);
+    } catch (error) {
+      const apiError = error as ApiError;
+      setError(apiError.message);
     }
   };
 

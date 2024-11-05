@@ -548,10 +548,8 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert query to lowercase for case-insensitive search
 	query = strings.ToLower(query)
 
-	// Get all unique games from connected_games across all users
 	var allGames []string
 	rows, err := db.Query(`
 		SELECT DISTINCT unnest(connected_games) as game
@@ -576,7 +574,6 @@ func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
 		allGames = append(allGames, game)
 	}
 
-	// If no games found, return empty array instead of 404
 	if len(allGames) == 0 {
 		json.NewEncoder(w).Encode([]string{})
 		return
@@ -672,13 +669,11 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	// Handle preflight requests
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -691,7 +686,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get current user's username from token
 	var currentUsername string
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
@@ -702,7 +696,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// First, get basic user info
 	var user User
 	err := db.Get(&user, `
 		SELECT id, username, twitch_username, discord_username, 
@@ -721,7 +714,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get follower counts
 	var followersCount, followingCount int
 	err = db.QueryRow(`
 		SELECT 
@@ -737,7 +729,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if current user is following this profile
 	var isFollowing bool
 	if currentUsername != "" {
 		err = db.QueryRow(`
@@ -755,7 +746,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create response object
 	response := struct {
 		User
 		FollowersCount int  `json:"followersCount"`
@@ -768,9 +758,7 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		IsFollowing:    isFollowing,
 	}
 
-	// If the profile is private and the viewer is not the owner or a follower
 	if user.IsPrivate && currentUsername != username && !isFollowing {
-		// Return limited profile data
 		limitedResponse := struct {
 			Username       string `json:"username"`
 			IsPrivate     bool   `json:"isPrivate"`
@@ -893,7 +881,6 @@ func disconnectGameHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//  connected games only show up in the user profile
 	var user User
 	err := db.Get(&user, "SELECT connected_games FROM users WHERE username = $1", claims.Username)
 	if err != nil {
@@ -926,7 +913,6 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	targetUsername := vars["username"]
 
-	// Get follower ID (current user)
 	var followerID int
 	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
 	if err != nil {
@@ -948,7 +934,6 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if already following
 	var exists bool
 	err = db.QueryRow(`
 		SELECT EXISTS(
@@ -968,7 +953,6 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create follow relationship
 	_, err = db.Exec(`
 		INSERT INTO followers (follower_id, following_id) 
 		VALUES ($1, $2)
@@ -989,7 +973,6 @@ func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	targetUsername := vars["username"]
 
-	// Get follower ID (current user)
 	var followerID int
 	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
 	if err != nil {
@@ -998,7 +981,6 @@ func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get target user ID
 	var followingID int
 	err = db.QueryRow("SELECT id FROM users WHERE username = $1", targetUsername).Scan(&followingID)
 	if err != nil {
@@ -1011,7 +993,6 @@ func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete follow relationship
 	result, err := db.Exec(`
 		DELETE FROM followers 
 		WHERE follower_id = $1 AND following_id = $2
