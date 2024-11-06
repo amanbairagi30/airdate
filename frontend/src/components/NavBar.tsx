@@ -5,6 +5,7 @@ import { auth } from "../services/auth";
 import { useRouter } from "next/navigation";
 import { Button } from "./ui/button";
 import { SelectTheme } from "./theme-toggle";
+import { LogOut, UserCircleIcon } from "lucide-react";
 
 export function NavBar() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -20,9 +21,9 @@ export function NavBar() {
     router.push("/login");
   };
 
-  if (isAuthenticated === null) {
-    return null;
-  }
+  // if (isAuthenticated === null) {
+  //   return null;
+  // }
 
   return (
     <>
@@ -39,14 +40,40 @@ export function NavBar() {
               Themes
             </Button>
           </div>
-          <div className="flex flex-1 text-2xl justify-center items-center font-secondary font-extrabold">
-            <span className="">Pixel</span>
-            <span className="text-purple-400">&</span>
-            <span className="">Chill</span>
-          </div>
+          <Link
+            href={"/"}
+            className="flex flex-1 text-2xl justify-center items-center font-serifItalic font-semibold"
+          >
+            {/* <span className="">Pixel</span> */}
+            <span className="">air</span>
+            <span className="text-purple-400">Date .</span>
+          </Link>
           <div className="flex flex-1 items-center justify-end gap-2">
             <SelectTheme />
-            <Button className="font-extrabold">Get Started</Button>
+            {isAuthenticated ? (
+              <>
+                <Button
+                  onClick={() => router.push("/profile")}
+                  className="flex items-center gap-2"
+                  variant={"new-outline"}
+                >
+                  Profile <UserCircleIcon className="w-4 h-4" />
+                </Button>
+                {/* <Button
+                    variant={"destructive"}
+                    className="flex items-center gap-2"
+                    onClick={handleLogout}
+                  >
+                    Logout <LogOut />
+                  </Button> */}
+              </>
+            ) : (
+              <>
+                <Link href="/register" target="_blankx">
+                  <Button className="font-extrabold">Sign up !</Button>
+                </Link>
+              </>
+            )}
           </div>
         </nav>
       </header>
