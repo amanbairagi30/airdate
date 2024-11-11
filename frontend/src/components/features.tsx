@@ -11,7 +11,7 @@ import { Button } from "./ui/button";
 
 export default function Features() {
   return (
-    <section className="">
+    <section className="mt-32">
       <div className="flex items-center justify-center">
         <div className="text-center">
           <div className="text-xl font-semibold">Here are some</div>

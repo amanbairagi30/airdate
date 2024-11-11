@@ -4,6 +4,7 @@ import { SelectTheme } from "./theme-toggle";
 import Hero from "./hero";
 import Features from "./features";
 import Footer from "./footer";
+import { UserFeed } from "./UserFeed";
 
 export default function Landing() {
   return (
@@ -12,6 +13,7 @@ export default function Landing() {
         <section className="p-4">
           <NavBar />
           <Hero />
+          <UserFeed position="landing" />
           <Features />
         </section>
       </main>
