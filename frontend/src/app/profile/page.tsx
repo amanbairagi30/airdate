@@ -22,7 +22,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface UserProfile {
   username: string;
@@ -112,9 +113,22 @@ export default function Profile() {
             <AvatarImage src="https://github.com/shadcn.png" alt="@shadcn" />
             <AvatarFallback>CN</AvatarFallback>
           </Avatar>
-          <div className="flex flex-col">
-            <div className="text-3xl font-semibold">@{user?.username}</div>
-            <div>{user.connectedGames.length} connected games</div>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex flex-col">
+              <div className="text-3xl font-semibold">@{user?.username}</div>
+              <div>{user.connectedGames.length} connected games</div>
+            </div>
+
+            <Button
+              onClick={() => {
+                localStorage.removeItem("token");
+                localStorage.removeItem("username");
+                router.push("/login");
+              }}
+              variant={"destructive"}
+            >
+              Logout <LogOut />
+            </Button>
           </div>
         </div>
         <div className="border-t px-6 py-3">
@@ -140,17 +154,6 @@ export default function Profile() {
       <div className="flex min-h-screen flex-col">
         <ConnectAccounts />
         <GameSearch />
-
-        <button
-          onClick={() => {
-            localStorage.removeItem("token");
-            localStorage.removeItem("username");
-            router.push("/login");
-          }}
-          className="mt-8 p-2 bg-red-500 text-white rounded"
-        >
-          Logout
-        </button>
       </div>
     </section>
   );
