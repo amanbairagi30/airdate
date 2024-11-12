@@ -38,8 +38,8 @@ export default function Hero() {
               </p>
             </div>
             <div className="flex items-center justify-center gap-4">
-              <Button className="">
-                Find my match <Telescope className="w-4 h-4" />
+              <Button Icon={Telescope} iconPlacement="right">
+                Find my match
               </Button>
               <Button variant={"linkHover2"} className="">
                 Try for free
