@@ -1,6 +1,6 @@
 import { auth } from './auth';
 
-const API_BASE_URL = 'http://localhost:8080/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080';
 
 const getHeaders = () => {
   const token = auth.getToken();
@@ -16,9 +16,12 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/register`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Origin': 'http://localhost:3000'
         },
+        credentials: 'include',
         body: JSON.stringify({ username, password }),
       });
 
@@ -30,10 +33,6 @@ export const api = {
       }
 
       const data = await response.json();
-      // After successful registration, automatically log in
-      if (data.token) {
-        auth.login(data.token, data.username);
-      }
       return data;
     } catch (error) {
       console.error('Registration error:', error);
@@ -47,23 +46,21 @@ export const api = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Origin': 'http://localhost:3000'
         },
-        body: JSON.stringify({
-          username: username.trim(),
-          password: password.trim(),
-        }),
+        body: JSON.stringify({ username, password }),
       });
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({
-          error: `Login failed with status ${response.status}`
-        }));
-        throw new Error(data.error || 'Login failed');
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Server error: ${response.status}`);
       }
 
       const data = await response.json();
-      // Store the token and username in localStorage
-      auth.login(data.token, data.username);
+      if (data.token) {
+        auth.login(data.token, data.username);
+      }
       return data;
     } catch (error) {
       console.error('Login error:', error);
@@ -177,20 +174,19 @@ export const api = {
 
   getUserProfile: async (username: string) => {
     try {
-      const token = auth.getToken();
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
-      const response = await fetch(`${API_BASE_URL}/profile/${encodeURIComponent(username)}`, {
+      const response = await fetch(`${API_BASE_URL}/profile/${username}`, {
         method: 'GET',
-        headers: getHeaders(),
-        credentials: 'include',
+        headers: {
+          ...getHeaders(),
+          'Authorization': `Bearer ${auth.getToken()}`
+        },
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to fetch profile: ${response.statusText}`);
+        if (response.status === 404) {
+          throw new Error('Profile not found');
+        }
+        throw new Error('Failed to fetch profile');
       }
 
       return await response.json();
@@ -290,6 +286,16 @@ export const api = {
       throw error;
     }
   },
+
+  checkApiHealth: async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/health`);
+      return response.ok;
+    } catch (error) {
+      console.error('API health check failed:', error);
+      return false;
+    }
+  }
 };
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {

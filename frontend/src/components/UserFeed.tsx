@@ -73,6 +73,10 @@ export function UserFeed({
     }
   };
 
+  const handleMeetPerson = (username: string) => {
+    router.push(`/profile/${username}`);
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-[200px]">
@@ -199,11 +203,10 @@ export function UserFeed({
                 </>
               )}
               <Button
-                Icon={LucideExternalLink}
-                iconPlacement="right"
-                className="text-xs px-6 h-9"
+                onClick={() => handleMeetPerson(user.username)}
+                className="w-full flex items-center justify-center gap-2"
               >
-                Meet this person
+                Meet this person <Eye className="w-4 h-4" />
               </Button>
             </div>
             {/* {user.isPrivate ? (

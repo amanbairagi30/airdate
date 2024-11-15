@@ -117,6 +117,24 @@ func validateToken(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
+func initDatabase() error {
+	_, err := db.Exec(`
+	CREATE TABLE IF NOT EXISTS users (
+		id SERIAL PRIMARY KEY,
+		username VARCHAR(255) UNIQUE NOT NULL,
+		password VARCHAR(255) NOT NULL,
+		twitch_username VARCHAR(255),
+		discord_username VARCHAR(255),
+		instagram_handle VARCHAR(255),
+		youtube_channel VARCHAR(255),
+		favorite_games TEXT[],
+		connected_games TEXT[],
+		is_private BOOLEAN DEFAULT false
+	);
+	`)
+	return err
+}
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("No .env file found, using environment variables")
@@ -152,87 +170,58 @@ func main() {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS users (
-			id SERIAL PRIMARY KEY,
-			username TEXT UNIQUE NOT NULL,
-			password TEXT NOT NULL,
-			twitch_username TEXT,
-			discord_username TEXT,
-			instagram_handle TEXT,
-			youtube_channel TEXT,
-			favorite_games TEXT,
-			connected_games TEXT[] DEFAULT '{}'::TEXT[],
-			is_private BOOLEAN DEFAULT FALSE
-		)
-	`)
-	if err != nil {
-		log.Fatalf("Error creating tables: %v", err)
+	// Initialize database tables
+	if err := initDatabase(); err != nil {
+		log.Fatalf("Error initializing database: %v", err)
 	}
 
-	_, err = db.Exec(`
-		DO $$ 
-		BEGIN 
-			BEGIN
-				ALTER TABLE users ADD COLUMN is_private BOOLEAN DEFAULT FALSE;
-			EXCEPTION
-				WHEN duplicate_column THEN 
-					NULL;
-			END;
-		END $$;
-	`)
-	if err != nil {
-		log.Printf("Error running migration: %v", err)
-	}
-
-	// Create followers table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS followers (
-			follower_id INTEGER REFERENCES users(id),
-			following_id INTEGER REFERENCES users(id),
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (follower_id, following_id)
+				follower_id INTEGER REFERENCES users(id),
+				following_id INTEGER REFERENCES users(id),
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (follower_id, following_id)
 		)
 	`)
 	if err != nil {
 		log.Fatal("Error creating followers table:", err)
 	}
 
-	corsHandler := cors.New(cors.Options{
+	router := mux.NewRouter()
+
+	// Update CORS configuration
+	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization", "Accept"},
+		AllowedHeaders:   []string{"Content-Type", "Accept", "Authorization", "Origin"},
+		ExposedHeaders:   []string{"Authorization"},
 		AllowCredentials: true,
 		Debug:           true,
 	})
 
-	r := mux.NewRouter()
+	// Add routes
+	router.HandleFunc("/register", registerHandler).Methods("POST", "OPTIONS")
+	router.HandleFunc("/login", loginHandler).Methods("POST", "OPTIONS")
+	router.HandleFunc("/users", getAllUsersHandler).Methods("GET")
+	router.HandleFunc("/profile/{username}", getUserProfileHandler).Methods("GET")
+	router.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
+	router.HandleFunc("/follow/{username}", authMiddleware(followUserHandler)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/unfollow/{username}", authMiddleware(unfollowUserHandler)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/profile", authMiddleware(getProfileHandler)).Methods("GET")
+	router.HandleFunc("/privacy", authMiddleware(updatePrivacyHandler)).Methods("POST")
+	router.HandleFunc("/connect/twitch", authMiddleware(connectTwitchHandler)).Methods("POST")
+	router.HandleFunc("/connect/discord", authMiddleware(connectDiscordHandler)).Methods("POST")
+	router.HandleFunc("/connect/instagram", authMiddleware(connectInstagramHandler)).Methods("POST")
+	router.HandleFunc("/connect/youtube", authMiddleware(connectYoutubeHandler)).Methods("POST")
+	router.HandleFunc("/connect/game", authMiddleware(connectGameHandler)).Methods("POST")
+	router.HandleFunc("/disconnect/instagram", authMiddleware(disconnectInstagramHandler)).Methods("POST")
+	router.HandleFunc("/disconnect/youtube", authMiddleware(disconnectYoutubeHandler)).Methods("POST")
+	router.HandleFunc("/disconnect/game", authMiddleware(disconnectGameHandler)).Methods("POST")
 
-	// Public routes
-	api := r.PathPrefix("/api").Subrouter()
-	api.HandleFunc("/register", registerHandler).Methods("POST")
-	api.HandleFunc("/login", loginHandler).Methods("POST")
-	api.HandleFunc("/users", getAllUsersHandler).Methods("GET")
-	api.HandleFunc("/profile/{username}", getUserProfileHandler).Methods("GET")
-	api.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
+	// Wrap router with CORS handler
+	handler := c.Handler(router)
 
-	// Protected routes
-	api.HandleFunc("/follow/{username}", authMiddleware(followUserHandler)).Methods("POST", "OPTIONS")
-	api.HandleFunc("/unfollow/{username}", authMiddleware(unfollowUserHandler)).Methods("POST", "OPTIONS")
-	api.HandleFunc("/profile", authMiddleware(getProfileHandler)).Methods("GET")
-	api.HandleFunc("/privacy", authMiddleware(updatePrivacyHandler)).Methods("POST")
-	api.HandleFunc("/connect/twitch", authMiddleware(connectTwitchHandler)).Methods("POST")
-	api.HandleFunc("/connect/discord", authMiddleware(connectDiscordHandler)).Methods("POST")
-	api.HandleFunc("/connect/instagram", authMiddleware(connectInstagramHandler)).Methods("POST")
-	api.HandleFunc("/connect/youtube", authMiddleware(connectYoutubeHandler)).Methods("POST")
-	api.HandleFunc("/connect/game", authMiddleware(connectGameHandler)).Methods("POST")
-	api.HandleFunc("/disconnect/instagram", authMiddleware(disconnectInstagramHandler)).Methods("POST")
-	api.HandleFunc("/disconnect/youtube", authMiddleware(disconnectYoutubeHandler)).Methods("POST")
-	api.HandleFunc("/disconnect/game", authMiddleware(disconnectGameHandler)).Methods("POST")
-
-	// Apply CORS middleware
-	handler := corsHandler.Handler(r)
-
+	// Start server
 	log.Printf("Server starting on port 8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {
 		log.Fatal(err)
@@ -324,28 +313,25 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("=== Login Handler Start ===")
+	// Set CORS headers
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	var loginRequest struct {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var loginReq struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&loginRequest); err != nil {
-		log.Printf("Error decoding request: %v", err)
-		http.Error(w, `{"error":"Invalid request format"}`, http.StatusBadRequest)
-		return
-	}
-
-	username := strings.TrimSpace(loginRequest.Username)
-	password := strings.TrimSpace(loginRequest.Password)
-
-	log.Printf("Login attempt for username: %s", username)
-
-	if username == "" || password == "" {
-		log.Printf("Empty username or password")
-		http.Error(w, `{"error":"Username and password are required"}`, http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -354,17 +340,20 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		SELECT id, username, password
 		FROM users 
 		WHERE username = $1`,
-		username)
+		loginReq.Username)
 
 	if err != nil {
-		log.Printf("User not found: %v", err)
-		http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		log.Printf("Database error: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginReq.Password))
 	if err != nil {
-		log.Printf("Password mismatch: %v", err)
 		http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
@@ -387,14 +376,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		"message":  "Login successful",
 	}
 
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error encoding response: %v", err)
-		return
-	}
-
-	log.Printf("Login successful for user: %s", username)
-	log.Printf("=== Login Handler End ===")
+	json.NewEncoder(w).Encode(response)
 }
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
