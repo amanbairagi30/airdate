@@ -147,10 +147,11 @@ export const api = {
   },
 
   searchGames: async (query: string): Promise<string[]> => {
-    const response = await fetch(`${API_BASE_URL}/api/games/search?q=${encodeURIComponent(query)}`, {
+    const response = await fetch(`${API_BASE_URL}/games/search?q=${encodeURIComponent(query)}`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Authorization': `Bearer ${auth.getToken()}`,
+        'Content-Type': 'application/json',
       },
     });
     

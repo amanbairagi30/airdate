@@ -98,7 +98,7 @@ type UserProfile struct {
 
 func validateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
-	
+
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -130,6 +130,20 @@ func initDatabase() error {
 		favorite_games TEXT[],
 		connected_games TEXT[],
 		is_private BOOLEAN DEFAULT false
+	);
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS user_games (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER REFERENCES users(id),
+		game_name VARCHAR(255) NOT NULL,
+		game_username VARCHAR(255),
+		game_id VARCHAR(255),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 	`)
 	return err
@@ -196,7 +210,7 @@ func main() {
 		AllowedHeaders:   []string{"Content-Type", "Accept", "Authorization", "Origin"},
 		ExposedHeaders:   []string{"Authorization"},
 		AllowCredentials: true,
-		Debug:           true,
+		Debug:            true,
 	})
 
 	// Add routes
@@ -524,45 +538,42 @@ func connectYoutubeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchGamesHandler(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		http.Error(w, "Search query is required", http.StatusBadRequest)
-		return
-	}
-
-	query = strings.ToLower(query)
-
-	var allGames []string
-	rows, err := db.Query(`
-		SELECT DISTINCT unnest(connected_games) as game
-		FROM users
-		WHERE LOWER(unnest(connected_games)) LIKE $1
-		LIMIT 10
-	`, "%"+query+"%")
-	
-	if err != nil {
-		log.Printf("Error searching games: %v", err)
-		http.Error(w, "Failed to search games", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var game string
-		if err := rows.Scan(&game); err != nil {
-			log.Printf("Error scanning game result: %v", err)
-			continue
-		}
-		allGames = append(allGames, game)
-	}
-
-	if len(allGames) == 0 {
-		json.NewEncoder(w).Encode([]string{})
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(allGames)
+
+	// Get the search query from URL parameters
+	query := strings.ToLower(r.URL.Query().Get("q"))
+	if query == "" {
+		http.Error(w, `{"error":"Search query is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// List of popular games
+	popularGames := []string{
+		"Valorant",
+		"BGMI",
+		"Counter-Strike 2",
+		"League of Legends",
+		"Dota 2",
+		"Apex Legends",
+		"Fortnite",
+		"Call of Duty: Warzone",
+		"PUBG: BATTLEGROUNDS",
+		"Minecraft",
+		"GTA V",
+		"Overwatch 2",
+		"Rainbow Six Siege",
+		"Rocket League",
+	}
+
+	// Filter games based on search query
+	var results []string
+	for _, game := range popularGames {
+		if strings.Contains(strings.ToLower(game), query) {
+			results = append(results, game)
+		}
+	}
+
+	json.NewEncoder(w).Encode(results)
 }
 
 func disconnectTwitchHandler(w http.ResponseWriter, r *http.Request) {
@@ -597,8 +608,9 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*Claims)
 
 	var requestBody struct {
-		GameName string `json:"gameName"`
-		GameID   string `json:"gameId"`
+		GameName     string `json:"gameName"`
+		GameUsername string `json:"gameUsername"`
+		GameId       string `json:"gameId"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
@@ -606,21 +618,52 @@ func connectGameHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := db.Exec(`
-		UPDATE users 
-		SET connected_games = array_append(connected_games, $1) 
-		WHERE username = $2 AND NOT $1 = ANY(connected_games)`,
-		requestBody.GameName, claims.Username)
-
+	// Get user ID
+	var userId int
+	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&userId)
 	if err != nil {
-		log.Printf("Error connecting game: %v", err)
-		http.Error(w, "Error connecting game", http.StatusInternalServerError)
+		http.Error(w, "Failed to get user ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Begin transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Insert into user_games table
+	_, err = tx.Exec(`
+		INSERT INTO user_games (user_id, game_name, game_username, game_id)
+		VALUES ($1, $2, $3, $4)
+	`, userId, requestBody.GameName, requestBody.GameUsername, requestBody.GameId)
+	if err != nil {
+		http.Error(w, "Failed to connect game", http.StatusInternalServerError)
+		return
+	}
+
+	// Update connected_games array in users table
+	_, err = tx.Exec(`
+		UPDATE users 
+		SET connected_games = array_append(COALESCE(connected_games, ARRAY[]::text[]), $1)
+		WHERE id = $2 AND NOT ($1 = ANY(COALESCE(connected_games, ARRAY[]::text[])))
+	`, requestBody.GameName, userId)
+	if err != nil {
+		http.Error(w, "Failed to update user's connected games", http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": fmt.Sprintf("Successfully connected to %s", requestBody.GameName),
+		"message": "Game connected successfully",
 	})
 }
 
@@ -633,7 +676,7 @@ func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 		FROM users 
 		ORDER BY id DESC
 	`)
-	
+
 	if err != nil {
 		log.Printf("Error fetching users: %v", err)
 		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
@@ -650,119 +693,116 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
-func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	w.Header().Set("Access-Control-Allow-Credentials", "true")
+// Add this struct for game connections
+type GameConnection struct {
+	Name     string `json:"name"`
+	Username string `json:"username,omitempty"`
+	GameID   string `json:"gameId,omitempty"`
+}
 
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
+type UserProfileResponse struct {
+	Username        string           `json:"username"`
+	TwitchUsername  string           `json:"twitchUsername,omitempty"`
+	DiscordUsername string           `json:"discordUsername,omitempty"`
+	InstagramHandle string           `json:"instagramHandle,omitempty"`
+	YoutubeChannel  string           `json:"youtubeChannel,omitempty"`
+	ConnectedGames  []GameConnection `json:"connectedGames"`
+	IsPrivate       bool             `json:"isPrivate"`
+	FollowersCount  int              `json:"followersCount"`
+	FollowingCount  int              `json:"followingCount"`
+	IsFollowing     bool             `json:"isFollowing"`
+}
+
+func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 
 	vars := mux.Vars(r)
 	username := vars["username"]
-	if username == "" {
-		http.Error(w, "Username is required", http.StatusBadRequest)
-		return
+
+	// Update the struct field tags to match database column names
+	var user struct {
+		ID              int            `db:"id"`
+		Username        string         `db:"username"`
+		TwitchUsername  sql.NullString `db:"twitch_username"`
+		DiscordUsername sql.NullString `db:"discord_username"`
+		InstagramHandle sql.NullString `db:"instagram_handle"`
+		YoutubeChannel  sql.NullString `db:"youtube_channel"`
+		IsPrivate       bool           `db:"is_private"`
 	}
 
-	var currentUsername string
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
-		claims, err := validateToken(tokenString)
-		if err == nil {
-			currentUsername = claims.Username
-		}
-	}
-
-	var user User
+	// Update the SQL query with correct column aliases
 	err := db.Get(&user, `
-		SELECT id, username, twitch_username, discord_username, 
-			   instagram_handle, youtube_channel, connected_games, 
-			   is_private
+		SELECT 
+			id,
+			username,
+			twitch_username,
+			discord_username,
+			instagram_handle,
+			youtube_channel,
+			is_private
 		FROM users 
-		WHERE username = $1`, username)
+		WHERE username = $1`,
+		username)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "User not found", http.StatusNotFound)
-		} else {
-			log.Printf("Database error: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	var followersCount, followingCount int
-	err = db.QueryRow(`
-		SELECT 
-			(SELECT COUNT(*) FROM followers WHERE following_id = u.id) as followers_count,
-			(SELECT COUNT(*) FROM followers WHERE follower_id = u.id) as following_count
-		FROM users u 
-		WHERE u.username = $1
-	`, username).Scan(&followersCount, &followingCount)
-
-	if err != nil {
-		log.Printf("Error getting follower counts: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	var isFollowing bool
-	if currentUsername != "" {
-		err = db.QueryRow(`
-			SELECT EXISTS(
-				SELECT 1 FROM followers 
-				WHERE follower_id = (SELECT id FROM users WHERE username = $1)
-				AND following_id = (SELECT id FROM users WHERE username = $2)
-			)
-		`, currentUsername, username).Scan(&isFollowing)
-
-		if err != nil {
-			log.Printf("Error checking follow status: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
 			return
 		}
-	}
-
-	response := struct {
-		User
-		FollowersCount int  `json:"followersCount"`
-		FollowingCount int  `json:"followingCount"`
-		IsFollowing    bool `json:"isFollowing"`
-	}{
-		User:           user,
-		FollowersCount: followersCount,
-		FollowingCount: followingCount,
-		IsFollowing:    isFollowing,
-	}
-
-	if user.IsPrivate && currentUsername != username && !isFollowing {
-		limitedResponse := struct {
-			Username       string `json:"username"`
-			IsPrivate     bool   `json:"isPrivate"`
-			FollowersCount int   `json:"followersCount"`
-			FollowingCount int   `json:"followingCount"`
-			IsFollowing    bool  `json:"isFollowing"`
-		}{
-			Username:       user.Username,
-			IsPrivate:     user.IsPrivate,
-			FollowersCount: followersCount,
-			FollowingCount: followingCount,
-			IsFollowing:    isFollowing,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(limitedResponse)
+		log.Printf("Database error: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	// Get connected games with their details
+	var games []GameConnection
+	rows, err := db.Query(`
+		SELECT 
+			game_name as name,
+			game_username as username,
+			game_id as "gameId"
+		FROM user_games
+		WHERE user_id = $1`,
+		user.ID)
+	if err != nil {
+		log.Printf("Error fetching games: %v", err)
+	} else {
+		defer rows.Close()
+		for rows.Next() {
+			var game GameConnection
+			var username, gameID sql.NullString
+			err := rows.Scan(&game.Name, &username, &gameID)
+			if err != nil {
+				log.Printf("Error scanning game row: %v", err)
+				continue
+			}
+			if username.Valid {
+				game.Username = username.String
+			}
+			if gameID.Valid {
+				game.GameID = gameID.String
+			}
+			games = append(games, game)
+		}
+	}
+
+	// Create the response
+	response := UserProfileResponse{
+		Username:        user.Username,
+		TwitchUsername:  user.TwitchUsername.String,
+		DiscordUsername: user.DiscordUsername.String,
+		InstagramHandle: user.InstagramHandle.String,
+		YoutubeChannel:  user.YoutubeChannel.String,
+		ConnectedGames:  games,
+		IsPrivate:       user.IsPrivate,
+		FollowersCount:  0, // Add follower count logic if needed
+		FollowingCount:  0, // Add following count logic if needed
+		IsFollowing:     false,
+	}
+
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 }
@@ -863,24 +903,46 @@ func disconnectGameHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user User
-	err := db.Get(&user, "SELECT connected_games FROM users WHERE username = $1", claims.Username)
+	// Get user ID
+	var userId int
+	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&userId)
 	if err != nil {
-		http.Error(w, "Failed to get user games", http.StatusInternalServerError)
+		http.Error(w, "Failed to get user ID", http.StatusInternalServerError)
 		return
 	}
 
-	var updatedGames StringArray
-	for _, game := range user.ConnectedGames {
-		if game != requestBody.GameName {
-			updatedGames = append(updatedGames, game)
-		}
+	// Begin transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
+		return
 	}
+	defer tx.Rollback()
 
-	_, err = db.Exec("UPDATE users SET connected_games = $1 WHERE username = $2",
-		updatedGames, claims.Username)
+	// Remove from user_games table
+	_, err = tx.Exec(`
+		DELETE FROM user_games 
+		WHERE user_id = $1 AND game_name = $2
+	`, userId, requestBody.GameName)
 	if err != nil {
 		http.Error(w, "Failed to disconnect game", http.StatusInternalServerError)
+		return
+	}
+
+	// Update connected_games array in users table
+	_, err = tx.Exec(`
+		UPDATE users 
+		SET connected_games = array_remove(connected_games, $1)
+		WHERE id = $2
+	`, requestBody.GameName, userId)
+	if err != nil {
+		http.Error(w, "Failed to update user's connected games", http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
 

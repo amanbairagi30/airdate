@@ -14,20 +14,36 @@ import {
   YoutubeIcon,
 } from '@/app/icons/icon';
 
+interface GameConnection {
+  name: string;
+  username?: string;
+  gameId?: string;
+}
+
 interface UserProfile {
   username: string;
   twitchUsername?: string;
   discordUsername?: string;
   instagramHandle?: string;
   youtubeChannel?: string;
-  connectedGames: string[];
+  connectedGames: GameConnection[];
   isPrivate: boolean;
+  followersCount: number;
+  followingCount: number;
+  isFollowing: boolean;
 }
 
 export default function UserProfileView() {
   const params = useParams();
   const router = useRouter();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile>({
+    username: '',
+    connectedGames: [],
+    isPrivate: false,
+    followersCount: 0,
+    followingCount: 0,
+    isFollowing: false
+  });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,19 +98,51 @@ export default function UserProfileView() {
         <div className='h-32 flex items-center gap-4 justify-start px-6'>
           <Avatar className='w-20 h-20 rounded-2xl'>
             <AvatarImage src='https://github.com/shadcn.png' alt='@shadcn' />
-            <AvatarFallback>{profile.username[0]}</AvatarFallback>
+            <AvatarFallback>{profile?.username?.[0]}</AvatarFallback>
           </Avatar>
           <div className='flex flex-col'>
-            <div className='text-3xl font-semibold'>@{profile.username}</div>
-            <div>{profile.connectedGames.length} connected games</div>
+            <div className='text-3xl font-semibold'>@{profile?.username}</div>
+            <div className='flex gap-4 text-sm text-gray-500'>
+              <span>{profile?.followersCount || 0} followers</span>
+              <span>{profile?.followingCount || 0} following</span>
+              <span>{profile?.connectedGames?.length || 0} games</span>
+            </div>
           </div>
+        </div>
+
+        {/* Connected Games */}
+        <div className='border-t px-6 py-4'>
+          <h2 className='text-xl font-semibold mb-4'>Connected Games</h2>
+          {profile?.connectedGames && profile.connectedGames.length > 0 ? (
+            <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+              {profile.connectedGames.map((game, index) => (
+                <div key={index} className='flex flex-col gap-1'>
+                  <Badge variant='secondary' className='p-2 mb-1'>
+                    {game.name}
+                  </Badge>
+                  {(game.username || game.gameId) && (
+                    <div className='text-sm text-gray-500 px-2'>
+                      {game.username && (
+                        <div>Username: {game.username}</div>
+                      )}
+                      {game.gameId && (
+                        <div>Game ID: {game.gameId}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className='text-gray-500'>No games connected yet</p>
+          )}
         </div>
 
         {/* Social Links */}
         <div className='border-t px-6 py-4'>
           <h2 className='text-xl font-semibold mb-4'>Connected Accounts</h2>
           <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
-            {profile.twitchUsername && (
+            {profile?.twitchUsername && (
               <div className='flex items-center gap-2'>
                 <TwitchIcon className='w-5 h-5' />
                 <a
@@ -107,13 +155,13 @@ export default function UserProfileView() {
                 </a>
               </div>
             )}
-            {profile.discordUsername && (
+            {profile?.discordUsername && (
               <div className='flex items-center gap-2'>
                 <DiscordIcon className='w-5 h-5' />
                 <span>{profile.discordUsername}</span>
               </div>
             )}
-            {profile.instagramHandle && (
+            {profile?.instagramHandle && (
               <div className='flex items-center gap-2'>
                 <InstaIcon className='w-5 h-5' />
                 <a
@@ -126,7 +174,7 @@ export default function UserProfileView() {
                 </a>
               </div>
             )}
-            {profile.youtubeChannel && (
+            {profile?.youtubeChannel && (
               <div className='flex items-center gap-2'>
                 <YoutubeIcon className='w-5 h-5' />
                 <a
@@ -139,18 +187,6 @@ export default function UserProfileView() {
                 </a>
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Connected Games */}
-        <div className='border-t px-6 py-4'>
-          <h2 className='text-xl font-semibold mb-4'>Connected Games</h2>
-          <div className='grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4'>
-            {profile.connectedGames.map((game, index) => (
-              <Badge key={index} variant='secondary' className='p-2'>
-                {game}
-              </Badge>
-            ))}
           </div>
         </div>
       </div>
