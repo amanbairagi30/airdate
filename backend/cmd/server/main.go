@@ -146,6 +146,37 @@ func initDatabase() error {
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS follow_requests (
+		id SERIAL PRIMARY KEY,
+		requester_id INTEGER REFERENCES users(id),
+		target_id INTEGER REFERENCES users(id),
+		status VARCHAR(20) DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(requester_id, target_id)
+	);
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS followers (
+		id SERIAL PRIMARY KEY,
+		follower_id INTEGER REFERENCES users(id),
+		following_id INTEGER REFERENCES users(id),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(follower_id, following_id)
+	);
+	`)
+	if err != nil {
+		return err
+	}
+
 	return err
 }
 
@@ -231,6 +262,9 @@ func main() {
 	router.HandleFunc("/disconnect/instagram", authMiddleware(disconnectInstagramHandler)).Methods("POST")
 	router.HandleFunc("/disconnect/youtube", authMiddleware(disconnectYoutubeHandler)).Methods("POST")
 	router.HandleFunc("/disconnect/game", authMiddleware(disconnectGameHandler)).Methods("POST")
+	router.HandleFunc("/api/follow/state/{username}", authMiddleware(getFollowStateHandler)).Methods("GET")
+	router.HandleFunc("/api/follow/accept/{username}", authMiddleware(acceptFollowRequestHandler)).Methods("POST")
+	router.HandleFunc("/api/follow/reject/{username}", authMiddleware(rejectFollowRequestHandler)).Methods("POST")
 
 	// Wrap router with CORS handler
 	handler := c.Handler(router)
@@ -957,59 +991,83 @@ func followUserHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	targetUsername := vars["username"]
 
-	var followerID int
+	// Don't allow self-following
+	if claims.Username == targetUsername {
+		http.Error(w, "Cannot follow yourself", http.StatusBadRequest)
+		return
+	}
+
+	var followerID, targetID int
+	var isPrivate bool
+
+	// Get follower's ID
 	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
 	if err != nil {
-		log.Printf("Error getting follower ID: %v", err)
 		http.Error(w, "Failed to get follower ID", http.StatusInternalServerError)
 		return
 	}
 
-	// Get target user ID
-	var followingID int
-	err = db.QueryRow("SELECT id FROM users WHERE username = $1", targetUsername).Scan(&followingID)
+	// Get target user's details
+	err = db.QueryRow("SELECT id, is_private FROM users WHERE username = $1", targetUsername).Scan(&targetID, &isPrivate)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "User not found", http.StatusNotFound)
+			http.Error(w, "Target user not found", http.StatusNotFound)
 		} else {
-			log.Printf("Error getting following ID: %v", err)
-			http.Error(w, "Failed to get following ID", http.StatusInternalServerError)
+			http.Error(w, "Failed to get target user", http.StatusInternalServerError)
 		}
 		return
 	}
 
-	var exists bool
-	err = db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM followers 
-			WHERE follower_id = $1 AND following_id = $2
-		)
-	`, followerID, followingID).Scan(&exists)
+	// Start transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	if isPrivate {
+		// Create follow request for private accounts
+		_, err = tx.Exec(`
+			INSERT INTO follow_requests (requester_id, target_id, status)
+			VALUES ($1, $2, 'pending')
+			ON CONFLICT (requester_id, target_id) 
+			DO UPDATE SET status = 'pending'
+			WHERE follow_requests.status = 'rejected'
+		`, followerID, targetID)
+	} else {
+		// Direct follow for public accounts
+		_, err = tx.Exec(`
+			INSERT INTO followers (follower_id, following_id)
+			VALUES ($1, $2)
+			ON CONFLICT DO NOTHING
+		`, followerID, targetID)
+	}
 
 	if err != nil {
-		log.Printf("Error checking existing follow: %v", err)
-		http.Error(w, "Error checking follow status", http.StatusInternalServerError)
+		http.Error(w, "Error processing follow action", http.StatusInternalServerError)
 		return
 	}
 
-	if exists {
-		http.Error(w, "Already following this user", http.StatusBadRequest)
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Error completing follow action", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = db.Exec(`
-		INSERT INTO followers (follower_id, following_id) 
-		VALUES ($1, $2)
-	`, followerID, followingID)
-
-	if err != nil {
-		log.Printf("Error creating follow relationship: %v", err)
-		http.Error(w, "Error following user", http.StatusInternalServerError)
-		return
+	w.Header().Set("Content-Type", "application/json")
+	var followState string
+	var message string
+	if isPrivate {
+		followState = "requested"
+		message = "Follow request sent"
+	} else {
+		followState = "following"
+		message = "Successfully followed user"
 	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully followed user"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"followState": followState,
+		"message":     message,
+	})
 }
 
 func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
@@ -1017,51 +1075,57 @@ func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	targetUsername := vars["username"]
 
-	var followerID int
-	err := db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
+	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("Error getting follower ID: %v", err)
-		http.Error(w, "Failed to get follower ID", http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+	defer tx.Rollback()
 
-	var followingID int
-	err = db.QueryRow("SELECT id FROM users WHERE username = $1", targetUsername).Scan(&followingID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			http.Error(w, "User not found", http.StatusNotFound)
-		} else {
-			log.Printf("Error getting following ID: %v", err)
-			http.Error(w, "Failed to get following ID", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	result, err := db.Exec(`
+	// Delete from both followers and follow_requests tables
+	_, err = tx.Exec(`
+		WITH ids AS (
+			SELECT u1.id as follower_id, u2.id as target_id
+			FROM users u1, users u2
+			WHERE u1.username = $1 AND u2.username = $2
+		)
 		DELETE FROM followers 
-		WHERE follower_id = $1 AND following_id = $2
-	`, followerID, followingID)
+		WHERE follower_id = (SELECT follower_id FROM ids)
+		AND following_id = (SELECT target_id FROM ids)
+	`, claims.Username, targetUsername)
 
 	if err != nil {
-		log.Printf("Error unfollowing user: %v", err)
-		http.Error(w, "Error unfollowing user", http.StatusInternalServerError)
+		http.Error(w, "Error removing follow relationship", http.StatusInternalServerError)
 		return
 	}
 
-	rowsAffected, err := result.RowsAffected()
+	// Also remove any pending follow requests
+	_, err = tx.Exec(`
+		WITH ids AS (
+			SELECT u1.id as follower_id, u2.id as target_id
+			FROM users u1, users u2
+			WHERE u1.username = $1 AND u2.username = $2
+		)
+		DELETE FROM follow_requests
+		WHERE requester_id = (SELECT follower_id FROM ids)
+		AND target_id = (SELECT target_id FROM ids)
+	`, claims.Username, targetUsername)
+
 	if err != nil {
-		log.Printf("Error getting rows affected: %v", err)
-		http.Error(w, "Error checking unfollow status", http.StatusInternalServerError)
+		http.Error(w, "Error removing follow request", http.StatusInternalServerError)
 		return
 	}
 
-	if rowsAffected == 0 {
-		http.Error(w, "Not following this user", http.StatusBadRequest)
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Error completing unfollow action", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully unfollowed user"})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"followState": "not_following",
+		"message": "Successfully unfollowed user",
+	})
 }
 
 func getProfileHandler(w http.ResponseWriter, r *http.Request) {
@@ -1107,4 +1171,206 @@ func getProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+type FollowState struct {
+	IsFollowing    bool   `json:"isFollowing"`
+	FollowState    string `json:"followState"`
+	FollowersCount int    `json:"followersCount"`
+}
+
+type FollowRequest struct {
+	ID           int       `db:"id"`
+	RequesterID  int       `db:"requester_id"`
+	TargetID     int       `db:"target_id"`
+	Status       string    `db:"status"`
+	CreatedAt    time.Time `db:"created_at"`
+}
+
+func getFollowStateHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	vars := mux.Vars(r)
+	targetUsername := vars["username"]
+
+	// Don't allow self-following check
+	if claims.Username == targetUsername {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"followState": "self",
+			"followersCount": 0,
+		})
+		return
+	}
+
+	var followerID, targetID int
+	var followersCount int
+	var isPrivate bool
+	
+	// Get target user's details
+	err := db.QueryRow(`
+		SELECT id, is_private,
+		(SELECT COUNT(*) FROM followers WHERE following_id = users.id) as followers_count
+		FROM users WHERE username = $1
+	`, targetUsername).Scan(&targetID, &isPrivate, &followersCount)
+	
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Get follower's ID
+	err = db.QueryRow("SELECT id FROM users WHERE username = $1", claims.Username).Scan(&followerID)
+	if err != nil {
+		http.Error(w, "Follower not found", http.StatusNotFound)
+		return
+	}
+
+	// Check current follow state
+	var isFollowing bool
+	err = db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM followers 
+			WHERE follower_id = $1 AND following_id = $2
+		)
+	`, followerID, targetID).Scan(&isFollowing)
+
+	if err != nil {
+		http.Error(w, "Error checking follow status", http.StatusInternalServerError)
+		return
+	}
+
+	// Check for pending request if not following and account is private
+	var hasPendingRequest bool
+	if !isFollowing && isPrivate {
+		err = db.QueryRow(`
+			SELECT EXISTS(
+				SELECT 1 FROM follow_requests 
+				WHERE requester_id = $1 AND target_id = $2 AND status = 'pending'
+			)
+		`, followerID, targetID).Scan(&hasPendingRequest)
+
+		if err != nil {
+			http.Error(w, "Error checking request status", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Determine follow state
+	var followState string
+	var message string
+	if isPrivate {
+		followState = "requested"
+		message = "Follow request sent"
+	} else {
+		followState = "following"
+		message = "Successfully followed user"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"followState": followState,
+		"message":     message,
+	})
+}
+
+func acceptFollowRequestHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	vars := mux.Vars(r)
+	targetUsername := vars["username"]
+
+	var followerID, targetID int
+	err := db.QueryRow(`
+		SELECT 
+			(SELECT id FROM users WHERE username = $1) as follower_id,
+			u.id as target_id
+		FROM users u
+		WHERE u.username = $2
+	`, claims.Username, targetUsername).Scan(&followerID, &targetID)
+
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Start transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Accept follow request
+	_, err = tx.Exec(`
+		UPDATE follow_requests 
+		SET status = 'accepted'
+		WHERE requester_id = $1 AND target_id = $2
+	`, followerID, targetID)
+
+	if err != nil {
+		http.Error(w, "Error accepting follow request", http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Error completing follow request", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Follow request accepted",
+	})
+}
+
+func rejectFollowRequestHandler(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(userClaimsKey).(*Claims)
+	vars := mux.Vars(r)
+	targetUsername := vars["username"]
+
+	var followerID, targetID int
+	err := db.QueryRow(`
+		SELECT 
+			(SELECT id FROM users WHERE username = $1) as follower_id,
+			u.id as target_id
+		FROM users u
+		WHERE u.username = $2
+	`, claims.Username, targetUsername).Scan(&followerID, &targetID)
+
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Start transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Reject follow request
+	_, err = tx.Exec(`
+		UPDATE follow_requests 
+		SET status = 'rejected'
+		WHERE requester_id = $1 AND target_id = $2
+	`, followerID, targetID)
+
+	if err != nil {
+		http.Error(w, "Error rejecting follow request", http.StatusInternalServerError)
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Error completing follow request", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Follow request rejected",
+	})
 }

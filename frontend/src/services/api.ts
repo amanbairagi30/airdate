@@ -250,11 +250,30 @@ export const api = {
     });
   },
 
+  getFollowState: async (username: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/follow/state/${username}`, {
+        headers: getHeaders(),
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch follow state');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Follow state error:', error);
+      throw error;
+    }
+  },
+
   followUser: async (username: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/follow/${username}`, {
         method: 'POST',
         headers: getHeaders(),
+        credentials: 'include'
       });
 
       if (!response.ok) {
@@ -274,6 +293,7 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/unfollow/${username}`, {
         method: 'POST',
         headers: getHeaders(),
+        credentials: 'include'
       });
 
       if (!response.ok) {

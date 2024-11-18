@@ -13,6 +13,7 @@ import {
   TwitchIcon,
   YoutubeIcon,
 } from '@/app/icons/icon';
+import FollowButton from '@/components/FollowButton';
 
 interface GameConnection {
   name: string;
@@ -45,6 +46,7 @@ export default function UserProfileView() {
     isFollowing: false
   });
   const [error, setError] = useState<string | null>(null);
+  const currentUser = { username: localStorage.getItem('username') || '' };
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -107,6 +109,24 @@ export default function UserProfileView() {
               <span>{profile?.followingCount || 0} following</span>
               <span>{profile?.connectedGames?.length || 0} games</span>
             </div>
+            {currentUser.username && currentUser.username !== profile.username && (
+              <FollowButton
+                targetUsername={profile.username}
+                isPrivate={profile.isPrivate}
+                initialFollowState={profile.isFollowing}
+                initialFollowersCount={profile.followersCount}
+                currentUsername={currentUser.username}
+                onFollowStateChange={(isFollowing) => {
+                  setProfile(prev => ({
+                    ...prev,
+                    isFollowing,
+                    followersCount: isFollowing 
+                      ? prev.followersCount + 1 
+                      : prev.followersCount - 1
+                  }));
+                }}
+              />
+            )}
           </div>
         </div>
 
