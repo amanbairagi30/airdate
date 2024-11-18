@@ -737,11 +737,12 @@ type GameConnection struct {
 }
 
 type UserProfileResponse struct {
+	ID              int              `json:"id"`
 	Username        string           `json:"username"`
-	TwitchUsername  string           `json:"twitchUsername,omitempty"`
-	DiscordUsername string           `json:"discordUsername,omitempty"`
-	InstagramHandle string           `json:"instagramHandle,omitempty"`
-	YoutubeChannel  string           `json:"youtubeChannel,omitempty"`
+	TwitchUsername  *string          `json:"twitchUsername,omitempty"`
+	DiscordUsername *string          `json:"discordUsername,omitempty"`
+	InstagramHandle *string          `json:"instagramHandle,omitempty"`
+	YoutubeChannel  *string          `json:"youtubeChannel,omitempty"`
 	ConnectedGames  []GameConnection `json:"connectedGames"`
 	IsPrivate       bool             `json:"isPrivate"`
 	FollowersCount  int              `json:"followersCount"`
@@ -755,7 +756,6 @@ func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	targetUsername := vars["username"]
 	
-	// Get current user from auth token if available
 	var currentUsername string
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
@@ -765,9 +765,7 @@ func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var profile UserProfile
-
-	// Get user profile data with all necessary information
+	var profile UserProfileResponse
 	err := db.QueryRow(`
 		SELECT 
 			u.id,
@@ -776,7 +774,6 @@ func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
 			u.discord_username,
 			u.instagram_handle,
 			u.youtube_channel,
-			u.connected_games,
 			u.is_private,
 			(SELECT COUNT(*) FROM followers WHERE following_id = u.id) as followers_count,
 			(SELECT COUNT(*) FROM followers WHERE follower_id = u.id) as following_count,
@@ -797,7 +794,6 @@ func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
 		&profile.DiscordUsername,
 		&profile.InstagramHandle,
 		&profile.YoutubeChannel,
-		&profile.ConnectedGames,
 		&profile.IsPrivate,
 		&profile.FollowersCount,
 		&profile.FollowingCount,
@@ -814,9 +810,40 @@ func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get connected games with details
+	rows, err := db.Query(`
+		SELECT game_name, game_username, game_id
+		FROM user_games
+		WHERE user_id = (SELECT id FROM users WHERE username = $1)
+	`, targetUsername)
+	if err != nil {
+		log.Printf("Error fetching games: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var games []GameConnection
+	for rows.Next() {
+		var game GameConnection
+		var username, gameID sql.NullString
+		err := rows.Scan(&game.Name, &username, &gameID)
+		if err != nil {
+			log.Printf("Error scanning game row: %v", err)
+			continue
+		}
+		if username.Valid {
+			game.Username = username.String
+		}
+		if gameID.Valid {
+			game.GameID = gameID.String
+		}
+		games = append(games, game)
+	}
+	profile.ConnectedGames = games
+
 	// If the profile is private and the viewer is not authenticated or not following
 	if profile.IsPrivate && (currentUsername == "" || !profile.IsFollowing) {
-		// Return limited profile information
 		limitedProfile := struct {
 			Username       string `json:"username"`
 			IsPrivate     bool   `json:"isPrivate"`
