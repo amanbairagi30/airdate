@@ -244,14 +244,12 @@ func main() {
 		Debug:            true,
 	})
 
-	// Public routes
-	router.HandleFunc("/register", registerHandler).Methods("GET", "POST", "OPTIONS")
+	// Add routes
+	router.HandleFunc("/register", registerHandler).Methods("POST", "OPTIONS")
 	router.HandleFunc("/login", loginHandler).Methods("POST", "OPTIONS")
 	router.HandleFunc("/users", getAllUsersHandler).Methods("GET")
-	router.HandleFunc("/profile/{username}", handleProfileRequest).Methods("GET", "OPTIONS")
-
-	// Protected routes
-	router.HandleFunc("/games/search", authMiddleware(searchGamesHandler)).Methods("GET", "OPTIONS")
+	router.HandleFunc("/profile/{username}", getUserProfileHandler).Methods("GET")
+	router.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
 	router.HandleFunc("/follow/{username}", authMiddleware(followUserHandler)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/unfollow/{username}", authMiddleware(unfollowUserHandler)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/profile", authMiddleware(getProfileHandler)).Methods("GET")
@@ -737,12 +735,11 @@ type GameConnection struct {
 }
 
 type UserProfileResponse struct {
-	ID              int              `json:"id"`
 	Username        string           `json:"username"`
-	TwitchUsername  *string          `json:"twitchUsername,omitempty"`
-	DiscordUsername *string          `json:"discordUsername,omitempty"`
-	InstagramHandle *string          `json:"instagramHandle,omitempty"`
-	YoutubeChannel  *string          `json:"youtubeChannel,omitempty"`
+	TwitchUsername  string           `json:"twitchUsername,omitempty"`
+	DiscordUsername string           `json:"discordUsername,omitempty"`
+	InstagramHandle string           `json:"instagramHandle,omitempty"`
+	YoutubeChannel  string           `json:"youtubeChannel,omitempty"`
 	ConnectedGames  []GameConnection `json:"connectedGames"`
 	IsPrivate       bool             `json:"isPrivate"`
 	FollowersCount  int              `json:"followersCount"`
@@ -750,116 +747,98 @@ type UserProfileResponse struct {
 	IsFollowing     bool             `json:"isFollowing"`
 }
 
-func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
+func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	vars := mux.Vars(r)
-	targetUsername := vars["username"]
-	
-	var currentUsername string
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
-		if claims, err := validateToken(tokenString); err == nil {
-			currentUsername = claims.Username
-		}
+	username := vars["username"]
+
+	// Update the struct field tags to match database column names
+	var user struct {
+		ID              int            `db:"id"`
+		Username        string         `db:"username"`
+		TwitchUsername  sql.NullString `db:"twitch_username"`
+		DiscordUsername sql.NullString `db:"discord_username"`
+		InstagramHandle sql.NullString `db:"instagram_handle"`
+		YoutubeChannel  sql.NullString `db:"youtube_channel"`
+		IsPrivate       bool           `db:"is_private"`
 	}
 
-	var profile UserProfileResponse
-	err := db.QueryRow(`
+	// Update the SQL query with correct column aliases
+	err := db.Get(&user, `
 		SELECT 
-			u.id,
-			u.username,
-			u.twitch_username,
-			u.discord_username,
-			u.instagram_handle,
-			u.youtube_channel,
-			u.is_private,
-			(SELECT COUNT(*) FROM followers WHERE following_id = u.id) as followers_count,
-			(SELECT COUNT(*) FROM followers WHERE follower_id = u.id) as following_count,
-			CASE 
-				WHEN $1 = '' THEN false
-				ELSE EXISTS(
-					SELECT 1 FROM followers f 
-					WHERE f.follower_id = (SELECT id FROM users WHERE username = $1)
-					AND f.following_id = u.id
-				)
-			END as is_following
-		FROM users u 
-		WHERE u.username = $2
-	`, currentUsername, targetUsername).Scan(
-		&profile.ID,
-		&profile.Username,
-		&profile.TwitchUsername,
-		&profile.DiscordUsername,
-		&profile.InstagramHandle,
-		&profile.YoutubeChannel,
-		&profile.IsPrivate,
-		&profile.FollowersCount,
-		&profile.FollowingCount,
-		&profile.IsFollowing,
-	)
+			id,
+			username,
+			twitch_username,
+			discord_username,
+			instagram_handle,
+			youtube_channel,
+			is_private
+		FROM users 
+		WHERE username = $1`,
+		username)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "User not found", http.StatusNotFound)
+			http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
 			return
 		}
 		log.Printf("Database error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Get connected games with details
+	// Get connected games with their details
+	var games []GameConnection
 	rows, err := db.Query(`
-		SELECT game_name, game_username, game_id
+		SELECT 
+			game_name as name,
+			game_username as username,
+			game_id as "gameId"
 		FROM user_games
-		WHERE user_id = (SELECT id FROM users WHERE username = $1)
-	`, targetUsername)
+		WHERE user_id = $1`,
+		user.ID)
 	if err != nil {
 		log.Printf("Error fetching games: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	} else {
+		defer rows.Close()
+		for rows.Next() {
+			var game GameConnection
+			var username, gameID sql.NullString
+			err := rows.Scan(&game.Name, &username, &gameID)
+			if err != nil {
+				log.Printf("Error scanning game row: %v", err)
+				continue
+			}
+			if username.Valid {
+				game.Username = username.String
+			}
+			if gameID.Valid {
+				game.GameID = gameID.String
+			}
+			games = append(games, game)
+		}
+	}
+
+	// Create the response
+	response := UserProfileResponse{
+		Username:        user.Username,
+		TwitchUsername:  user.TwitchUsername.String,
+		DiscordUsername: user.DiscordUsername.String,
+		InstagramHandle: user.InstagramHandle.String,
+		YoutubeChannel:  user.YoutubeChannel.String,
+		ConnectedGames:  games,
+		IsPrivate:       user.IsPrivate,
+		FollowersCount:  0, // Add follower count logic if needed
+		FollowingCount:  0, // Add following count logic if needed 
+		IsFollowing:     false,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding response: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-
-	var games []GameConnection
-	for rows.Next() {
-		var game GameConnection
-		var username, gameID sql.NullString
-		err := rows.Scan(&game.Name, &username, &gameID)
-		if err != nil {
-			log.Printf("Error scanning game row: %v", err)
-			continue
-		}
-		if username.Valid {
-			game.Username = username.String
-		}
-		if gameID.Valid {
-			game.GameID = gameID.String
-		}
-		games = append(games, game)
-	}
-	profile.ConnectedGames = games
-
-	// If the profile is private and the viewer is not authenticated or not following
-	if profile.IsPrivate && (currentUsername == "" || !profile.IsFollowing) {
-		limitedProfile := struct {
-			Username       string `json:"username"`
-			IsPrivate     bool   `json:"isPrivate"`
-			FollowersCount int   `json:"followersCount"`
-			IsFollowing   bool   `json:"isFollowing"`
-		}{
-			Username:       profile.Username,
-			IsPrivate:     true,
-			FollowersCount: profile.FollowersCount,
-			IsFollowing:   profile.IsFollowing,
-		}
-		json.NewEncoder(w).Encode(limitedProfile)
-		return
-	}
-
-	json.NewEncoder(w).Encode(profile)
 }
 
 func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
@@ -868,7 +847,6 @@ func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-
 	var requestBody struct {
 		IsPrivate bool `json:"isPrivate"`
 	}
@@ -1145,7 +1123,7 @@ func unfollowUserHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"followState": "not_following",
-		"message": "Successfully unfollowed user",
+		"message":     "Successfully unfollowed user",
 	})
 }
 
@@ -1201,11 +1179,11 @@ type FollowState struct {
 }
 
 type FollowRequest struct {
-	ID           int       `db:"id"`
-	RequesterID  int       `db:"requester_id"`
-	TargetID     int       `db:"target_id"`
-	Status       string    `db:"status"`
-	CreatedAt    time.Time `db:"created_at"`
+	ID          int       `db:"id"`
+	RequesterID int       `db:"requester_id"`
+	TargetID    int       `db:"target_id"`
+	Status      string    `db:"status"`
+	CreatedAt   time.Time `db:"created_at"`
 }
 
 func getFollowStateHandler(w http.ResponseWriter, r *http.Request) {
@@ -1217,7 +1195,7 @@ func getFollowStateHandler(w http.ResponseWriter, r *http.Request) {
 	if claims.Username == targetUsername {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"followState": "self",
+			"followState":    "self",
 			"followersCount": 0,
 		})
 		return
@@ -1226,14 +1204,14 @@ func getFollowStateHandler(w http.ResponseWriter, r *http.Request) {
 	var followerID, targetID int
 	var followersCount int
 	var isPrivate bool
-	
+
 	// Get target user's details
 	err := db.QueryRow(`
 		SELECT id, is_private,
 		(SELECT COUNT(*) FROM followers WHERE following_id = users.id) as followers_count
 		FROM users WHERE username = $1
 	`, targetUsername).Scan(&targetID, &isPrivate, &followersCount)
-	
+
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return

@@ -178,25 +178,19 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/profile/${username}`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          ...getHeaders()
+          ...getHeaders(),
+          'Authorization': `Bearer ${auth.getToken()}`
         },
-        credentials: 'include'
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to fetch profile: ${response.statusText}`);
+        if (response.status === 404) {
+          throw new Error('Profile not found');
+        }
+        throw new Error('Failed to fetch profile');
       }
 
-      const data = await response.json();
-      return {
-        ...data,
-        isFollowing: data.isFollowing || false,
-        followersCount: data.followersCount || 0,
-        followingCount: data.followingCount || 0
-      };
+      return await response.json();
     } catch (error) {
       console.error('Profile fetch error:', error);
       throw error;
