@@ -244,12 +244,14 @@ func main() {
 		Debug:            true,
 	})
 
-	// Add routes
-	router.HandleFunc("/register", registerHandler).Methods("POST", "OPTIONS")
+	// Public routes
+	router.HandleFunc("/register", registerHandler).Methods("GET", "POST", "OPTIONS")
 	router.HandleFunc("/login", loginHandler).Methods("POST", "OPTIONS")
 	router.HandleFunc("/users", getAllUsersHandler).Methods("GET")
-	router.HandleFunc("/profile/{username}", getUserProfileHandler).Methods("GET")
-	router.HandleFunc("/games/search", searchGamesHandler).Methods("GET", "OPTIONS")
+	router.HandleFunc("/profile/{username}", handleProfileRequest).Methods("GET", "OPTIONS")
+
+	// Protected routes
+	router.HandleFunc("/games/search", authMiddleware(searchGamesHandler)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/follow/{username}", authMiddleware(followUserHandler)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/unfollow/{username}", authMiddleware(unfollowUserHandler)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/profile", authMiddleware(getProfileHandler)).Methods("GET")
@@ -747,98 +749,90 @@ type UserProfileResponse struct {
 	IsFollowing     bool             `json:"isFollowing"`
 }
 
-func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
+func handleProfileRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
+	
 	vars := mux.Vars(r)
-	username := vars["username"]
-
-	// Update the struct field tags to match database column names
-	var user struct {
-		ID              int            `db:"id"`
-		Username        string         `db:"username"`
-		TwitchUsername  sql.NullString `db:"twitch_username"`
-		DiscordUsername sql.NullString `db:"discord_username"`
-		InstagramHandle sql.NullString `db:"instagram_handle"`
-		YoutubeChannel  sql.NullString `db:"youtube_channel"`
-		IsPrivate       bool           `db:"is_private"`
+	targetUsername := vars["username"]
+	
+	// Get current user from auth token if available
+	var currentUsername string
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
+		if claims, err := validateToken(tokenString); err == nil {
+			currentUsername = claims.Username
+		}
 	}
 
-	// Update the SQL query with correct column aliases
-	err := db.Get(&user, `
+	var profile UserProfile
+
+	// Get user profile data with all necessary information
+	err := db.QueryRow(`
 		SELECT 
-			id,
-			username,
-			twitch_username,
-			discord_username,
-			instagram_handle,
-			youtube_channel,
-			is_private
-		FROM users 
-		WHERE username = $1`,
-		username)
+			u.id,
+			u.username,
+			u.twitch_username,
+			u.discord_username,
+			u.instagram_handle,
+			u.youtube_channel,
+			u.connected_games,
+			u.is_private,
+			(SELECT COUNT(*) FROM followers WHERE following_id = u.id) as followers_count,
+			(SELECT COUNT(*) FROM followers WHERE follower_id = u.id) as following_count,
+			CASE 
+				WHEN $1 = '' THEN false
+				ELSE EXISTS(
+					SELECT 1 FROM followers f 
+					WHERE f.follower_id = (SELECT id FROM users WHERE username = $1)
+					AND f.following_id = u.id
+				)
+			END as is_following
+		FROM users u 
+		WHERE u.username = $2
+	`, currentUsername, targetUsername).Scan(
+		&profile.ID,
+		&profile.Username,
+		&profile.TwitchUsername,
+		&profile.DiscordUsername,
+		&profile.InstagramHandle,
+		&profile.YoutubeChannel,
+		&profile.ConnectedGames,
+		&profile.IsPrivate,
+		&profile.FollowersCount,
+		&profile.FollowingCount,
+		&profile.IsFollowing,
+	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
+			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
 		log.Printf("Database error: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Get connected games with their details
-	var games []GameConnection
-	rows, err := db.Query(`
-		SELECT 
-			game_name as name,
-			game_username as username,
-			game_id as "gameId"
-		FROM user_games
-		WHERE user_id = $1`,
-		user.ID)
-	if err != nil {
-		log.Printf("Error fetching games: %v", err)
-	} else {
-		defer rows.Close()
-		for rows.Next() {
-			var game GameConnection
-			var username, gameID sql.NullString
-			err := rows.Scan(&game.Name, &username, &gameID)
-			if err != nil {
-				log.Printf("Error scanning game row: %v", err)
-				continue
-			}
-			if username.Valid {
-				game.Username = username.String
-			}
-			if gameID.Valid {
-				game.GameID = gameID.String
-			}
-			games = append(games, game)
+	// If the profile is private and the viewer is not authenticated or not following
+	if profile.IsPrivate && (currentUsername == "" || !profile.IsFollowing) {
+		// Return limited profile information
+		limitedProfile := struct {
+			Username       string `json:"username"`
+			IsPrivate     bool   `json:"isPrivate"`
+			FollowersCount int   `json:"followersCount"`
+			IsFollowing   bool   `json:"isFollowing"`
+		}{
+			Username:       profile.Username,
+			IsPrivate:     true,
+			FollowersCount: profile.FollowersCount,
+			IsFollowing:   profile.IsFollowing,
 		}
-	}
-
-	// Create the response
-	response := UserProfileResponse{
-		Username:        user.Username,
-		TwitchUsername:  user.TwitchUsername.String,
-		DiscordUsername: user.DiscordUsername.String,
-		InstagramHandle: user.InstagramHandle.String,
-		YoutubeChannel:  user.YoutubeChannel.String,
-		ConnectedGames:  games,
-		IsPrivate:       user.IsPrivate,
-		FollowersCount:  0, // Add follower count logic if needed
-		FollowingCount:  0, // Add following count logic if needed
-		IsFollowing:     false,
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error encoding response: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(limitedProfile)
 		return
 	}
+
+	json.NewEncoder(w).Encode(profile)
 }
 
 func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {

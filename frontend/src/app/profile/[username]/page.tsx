@@ -46,16 +46,25 @@ export default function UserProfileView() {
     isFollowing: false
   });
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const currentUser = { username: localStorage.getItem('username') || '' };
 
   useEffect(() => {
     const fetchProfile = async () => {
+      setIsLoading(true);
       try {
         const data = await api.getUserProfile(params.username as string);
-        setProfile(data);
+        setProfile({
+          ...data,
+          isFollowing: data.isFollowing || false,
+          followersCount: data.followersCount || 0,
+          followingCount: data.followingCount || 0
+        });
       } catch (error) {
         setError('Failed to load profile');
         console.error('Profile error:', error);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -63,6 +72,14 @@ export default function UserProfileView() {
       fetchProfile();
     }
   }, [params.username]);
+
+  if (isLoading) {
+    return (
+      <div className='flex min-h-screen flex-col items-center justify-center'>
+        <div className='animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500'></div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
