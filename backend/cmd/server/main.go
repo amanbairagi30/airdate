@@ -840,7 +840,6 @@ func getUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
-
 func updatePrivacyHandler(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*Claims)
 	if claims == nil {
