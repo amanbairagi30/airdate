@@ -11,7 +11,7 @@ export default function NoUserFeedPage() {
     <>
       <main>
         <Landing />
-        {/* Add other components you want to include */}
+
       </main>
     </>
   );
