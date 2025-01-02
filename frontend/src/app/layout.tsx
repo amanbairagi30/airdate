@@ -2,12 +2,10 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import {
   Instrument_Sans,
-  Instrument_Serif,
   Pixelify_Sans,
   Playfair_Display,
 } from "next/font/google";
 import "./globals.css";
-import { NavBar } from "../components/NavBar";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ThemeProvider } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";

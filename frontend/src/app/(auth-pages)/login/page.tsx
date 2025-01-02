@@ -36,9 +36,11 @@ export default function Login() {
       } else {
         throw new Error("Invalid response from server");
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Login error:", error);
-      setError(error.message || "Login failed. Please check your credentials.");
+      setError(
+        (error as string) || "Login failed. Please check your credentials."
+      );
     } finally {
       setLoading(false);
     }
@@ -89,7 +91,7 @@ export default function Login() {
         </Button>
       </form>
       <div className=" mt-10 flex flex-col items-center">
-        Don't have an account?
+        Don&apos;t have an account?
         <Button
           onClick={() => router.push("/register")}
           variant={"linkHover2"}

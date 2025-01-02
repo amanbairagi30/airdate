@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../services/api";
-import {
-  DiscordIcon,
-  InstaIcon,
-  TwitchIcon,
-  YoutubeIcon,
-} from "@/app/icons/icon";
 import { ChevronDownIcon } from "lucide-react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { YoutubeIcon } from "@/app/icons/youtube";
+import { TwitchIcon } from "@/app/icons/twitch";
+import { InstaIcon } from "@/app/icons/insta";
+import { DiscordIcon } from "@/app/icons/discord";
 
 const platformConfig = {
   discord: {
@@ -55,8 +53,7 @@ const PlatformCard = ({
   onConnect,
   premiumLabel,
   onDisconnect,
-}: any) => {
-  // @ts-ignore
+}) => {
   const config = platformConfig[platform];
   const handleDiscount = (platform: string) => {
     window.open(getDiscountLink(platform), "_blank");
@@ -195,8 +192,8 @@ export function ConnectAccounts() {
       }
 
       await refreshConnections(); // Refresh after connecting
-    } catch (error: any) {
-      setError(error.message || "Failed to connect account");
+    } catch (error) {
+      setError((error as string) || "Failed to connect account");
     }
   };
 
@@ -209,11 +206,11 @@ export function ConnectAccounts() {
 
       switch (type) {
         case "twitch":
-          await api.disconnectTwitch();
+          // await api.disconnectTwitch();
           setSuccess("Twitch account disconnected!");
           break;
         case "discord":
-          await api.disconnectDiscord();
+          // await api.disconnectDiscord();
           setSuccess("Discord account disconnected!");
           break;
         case "instagram":
@@ -227,8 +224,8 @@ export function ConnectAccounts() {
       }
 
       await refreshConnections(); // Refresh after disconnecting
-    } catch (error: any) {
-      setError(error.message || "Failed to disconnect account");
+    } catch (error) {
+      setError((error as string) || "Failed to disconnect account");
     }
   };
 
@@ -256,11 +253,13 @@ export function ConnectAccounts() {
           platform="discord"
           username={discordUsername}
           isConnected={connectedAccounts.discord}
+          premiumLabel={""}
           onUsernameChange={setDiscordUsername}
           onConnect={() => handleConnect("discord")}
           onDisconnect={() => handleDisconnect("discord")}
         />
         <PlatformCard
+          premiumLabel={""}
           platform="twitch"
           username={twitchUsername}
           isConnected={connectedAccounts.twitch}

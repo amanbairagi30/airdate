@@ -8,22 +8,10 @@ import { GameSearch } from "../../components/GameSearch";
 import { ApiError } from "../../types/errors";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import {
-  DiscordIcon,
-  InstaIcon,
-  LockIcon,
-  OpenLockICon,
-  TwitchIcon,
-  YoutubeIcon,
-} from "../icons/icon";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { ChevronDownIcon, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LockIcon } from "../icons/lockicon";
+import { OpenLockICon } from "../icons/openlock";
 
 interface UserProfile {
   username: string;

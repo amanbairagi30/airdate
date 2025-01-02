@@ -1,6 +1,5 @@
 import React from "react";
 import { NavBar } from "./NavBar";
-import { SelectTheme } from "./theme-toggle";
 import Hero from "./hero";
 import Features from "./features";
 import Footer from "./footer";

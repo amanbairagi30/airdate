@@ -1,6 +1,5 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "../services/api";
 import { ApiError } from "../types/errors";
@@ -9,7 +8,7 @@ import Image from "next/image";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { Eye, LucideExternalLink } from "lucide-react";
+import { Eye } from "lucide-react";
 
 interface UserProfile {
   id: number;

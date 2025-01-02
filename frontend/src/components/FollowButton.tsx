@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { api } from '@/services/api';
-import { Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { api } from "@/services/api";
+import { Loader2 } from "lucide-react";
 
 interface FollowButtonProps {
   targetUsername: string;
@@ -14,62 +14,68 @@ interface FollowButtonProps {
   onFollowStateChange?: (isFollowing: boolean) => void;
 }
 
-type FollowState = 'not_following' | 'following' | 'requested' | 'self';
+type FollowState = "not_following" | "following" | "requested" | "self";
 
 const FollowButton: React.FC<FollowButtonProps> = ({
   targetUsername,
-  isPrivate,
   initialFollowState,
   initialFollowersCount,
   currentUsername,
-  onFollowStateChange
+  onFollowStateChange,
 }) => {
-  const [followState, setFollowState] = useState<FollowState>('not_following');
+  const [followState, setFollowState] = useState<FollowState>("not_following");
   const [followersCount, setFollowersCount] = useState(initialFollowersCount);
+  console.log(followersCount);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    setFollowState(initialFollowState ? 'following' : 'not_following');
+    setFollowState(initialFollowState ? "following" : "not_following");
     setIsLoading(false);
   }, [initialFollowState]);
 
   const handleFollow = async () => {
-    if (isLoading || followState === 'self' || targetUsername === currentUsername) return;
-    
+    if (
+      isLoading ||
+      followState === "self" ||
+      targetUsername === currentUsername
+    )
+      return;
+
     setIsLoading(true);
     try {
       console.log("Attempting to follow:", targetUsername);
       const response = await api.followUser(targetUsername);
       setFollowState(response.followState);
-      
-      if (response.followState === 'following') {
-        setFollowersCount(prev => prev + 1);
+
+      if (response.followState === "following") {
+        setFollowersCount((prev) => prev + 1);
         onFollowStateChange?.(true);
       }
     } catch (error) {
-      console.error('Failed to follow user:', error);
+      console.error("Failed to follow user:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleUnfollow = async () => {
-    if (isLoading || followState === 'self') return;
-    
+    if (isLoading || followState === "self") return;
+
     setIsLoading(true);
     try {
       const response = await api.unfollowUser(targetUsername);
-      setFollowState('not_following');
-      setFollowersCount(prev => prev - 1);
+      console.log(response);
+      setFollowState("not_following");
+      setFollowersCount((prev) => prev - 1);
       onFollowStateChange?.(false);
     } catch (error) {
-      console.error('Failed to unfollow user:', error);
+      console.error("Failed to unfollow user:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  if (followState === 'self') {
+  if (followState === "self") {
     return null;
   }
 
@@ -77,30 +83,42 @@ const FollowButton: React.FC<FollowButtonProps> = ({
     const baseProps = {
       disabled: isLoading,
       size: "sm" as const,
-      className: "rounded-full min-w-[100px]"
+      className: "rounded-full min-w-[100px]",
     };
 
     switch (followState) {
-      case 'following':
+      case "following":
         return {
           ...baseProps,
           onClick: handleUnfollow,
-          variant: 'destructive' as const,
-          children: isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Unfollow'
+          variant: "destructive" as const,
+          children: isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            "Unfollow"
+          ),
         };
-      case 'requested':
+      case "requested":
         return {
           ...baseProps,
           onClick: handleUnfollow,
-          variant: 'secondary' as const,
-          children: isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Requested'
+          variant: "secondary" as const,
+          children: isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            "Requested"
+          ),
         };
       default:
         return {
           ...baseProps,
           onClick: handleFollow,
-          variant: 'default' as const,
-          children: isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Follow'
+          variant: "default" as const,
+          children: isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            "Follow"
+          ),
         };
     }
   };
@@ -108,4 +126,4 @@ const FollowButton: React.FC<FollowButtonProps> = ({
   return <Button {...getButtonProps()} />;
 };
 
-export default FollowButton; 
+export default FollowButton;

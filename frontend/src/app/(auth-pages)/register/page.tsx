@@ -20,9 +20,9 @@ export default function Register() {
       setError(null);
       await api.register(username, password);
       router.push("/login");
-    } catch (error: any) {
+    } catch (error) {
       console.error("Registration error:", error);
-      setError(error.message || "Registration failed");
+      setError((error as string) || "Registration failed");
     }
   };
 

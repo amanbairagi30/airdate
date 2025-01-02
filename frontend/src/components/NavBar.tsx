@@ -5,7 +5,7 @@ import { auth } from "../services/auth";
 import { useRouter } from "next/navigation";
 import { Button } from "./ui/button";
 import { SelectTheme } from "./theme-toggle";
-import { LogOut, UserCircleIcon } from "lucide-react";
+import { UserCircleIcon } from "lucide-react";
 
 export function NavBar() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -15,11 +15,11 @@ export function NavBar() {
     setIsAuthenticated(auth.isAuthenticated());
   }, []);
 
-  const handleLogout = () => {
-    auth.logout();
-    setIsAuthenticated(false);
-    router.push("/login");
-  };
+  // const handleLogout = () => {
+  //   auth.logout();
+  //   setIsAuthenticated(false);
+  //   router.push("/login");
+  // };
 
   // if (isAuthenticated === null) {
   //   return null;

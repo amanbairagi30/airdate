@@ -2,13 +2,7 @@ import React from "react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import Image from "next/image";
-import {
-  coupleGaming,
-  menGaming,
-  menGaming2,
-  womenGaming,
-  womenGaming2,
-} from "@/constants/images";
+import { coupleGaming, menGaming2, womenGaming2 } from "@/constants/images";
 import { Heart, Telescope } from "lucide-react";
 
 export default function Hero() {
@@ -33,8 +27,8 @@ export default function Hero() {
                 <div className="mt-2 font-semibold">gaming and creation.</div>
               </h1>
               <p className="mx-auto max-w-[600px] font-medium md:text-lg">
-                Connect with fellow gamers and content creators who'll make your
-                heart rate and APM skyrocket.
+                Connect with fellow gamers and content creators who&apos;ll make
+                your heart rate and APM skyrocket.
               </p>
             </div>
             <div className="flex items-center justify-center gap-4">

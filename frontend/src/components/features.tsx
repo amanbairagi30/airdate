@@ -1,11 +1,4 @@
-import {
-  Airplay,
-  ArrowRightIcon,
-  Columns2,
-  Film,
-  LucideExternalLink,
-  Users,
-} from "lucide-react";
+import { Airplay, ArrowRightIcon, Columns2, Film, Users } from "lucide-react";
 import React from "react";
 import { Button } from "./ui/button";
 
